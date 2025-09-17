@@ -1,0 +1,40 @@
+pose_extractor:
+  type: "media_pipe"
+  options:
+    model_complexity: 1
+
+# --- Active Model Configuration ---
+# This section defines which model the main application should use for inference.
+active_model: "supervised_model" # Can be "anomaly_model" or "supervised_model"
+
+# --- Anomaly Model (Unsupervised Autoencoder) ---
+anomaly_model:
+  class_path: "app.models.anomaly_autoencoder.AutoencoderAnomaly"
+  model_path: "weights/autoencoder_tcn.onnx"
+  params:
+    window_size: 32
+    feature_dim: 175
+
+# --- Supervised Multi-task Model (TCN+GRU) ---
+supervised_model:
+  class_path: "app.models.supervised_tcn_gru.SupervisedTcnGru"
+  model_path: "weights/supervised_tcn_gru.onnx"
+  params:
+    window_size: 48
+    feature_dim: 175
+    num_classes: 5
+
+# --- NEW: Language Model (LLM) Configuration for Phase 5 ---
+llm:
+  provider: "openrouter"
+  model_name: "qwen/qwen3-30b-a3b:free" 
+  # The API key will be loaded securely from the .env file by the code.
+
+# --- ASR and TTS (Placeholders for future expansion) ---
+asr:
+  class_path: "app.models.stt.WhisperSTT" # This is a placeholder
+  params:
+    model_size: "small"
+
+tts:
+  class_path: "app.models.tts.DeviceTTS" # This is a placeholder

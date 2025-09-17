@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rehab-PoC</title>
+    <style>
+        /* --- General Styles --- */
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            margin: 0; 
+            background-color: #121212; 
+            color: #e4e4e4;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* --- Main Content Area --- */
+        #main-content {
+            display: flex;
+            flex-grow: 1; /* Allow this to take up remaining space */
+            width: 100%;
+        }
+        #video-container, #avatar-container { 
+            flex: 1; 
+            position: relative; 
+            overflow: hidden;
+        }
+        video { 
+            width: 100%; 
+            height: 100%; 
+            object-fit: cover; 
+            transform: scaleX(-1); /* Mirror the webcam feed */
+        }
+        canvas { 
+            display: block; 
+            width: 100%; 
+            height: 100%; 
+        }
+
+        /* --- Top Bar: Upload & Proposals --- */
+        #top-bar {
+            background-color: #1e1e1e;
+            padding: 10px 20px;
+            width: 100%;
+            box-sizing: border-box;
+            border-bottom: 1px solid #333;
+        }
+
+        /* --- NEW: Proposal Container --- */
+        #proposal-container {
+            display: none; /* Hidden by default, JS will show it */
+            background-color: #2a2a2e;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+        }
+        .proposal-card {
+            background-color: #3c3c43;
+            padding: 15px;
+            margin-bottom: 10px;
+            border-radius: 5px;
+            border-left: 4px solid #007aff; /* Accent color */
+        }
+        .proposal-card p { margin: 0 0 10px 0; line-height: 1.5; }
+        .proposal-card button {
+            background-color: #007aff;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-right: 10px;
+            opacity: 0.9;
+        }
+        .proposal-card button:hover { opacity: 1; }
+        .proposal-card button:last-child { background-color: #555; }
+        
+        /* --- Upload Form --- */
+        #upload-form { display: flex; align-items: center; gap: 15px; }
+
+        /* --- Bottom Feedback Panel --- */
+        #feedback-panel { 
+            position: absolute; 
+            bottom: 20px; 
+            left: 20px; 
+            background: rgba(0,0,0,0.7); 
+            padding: 15px; 
+            border-radius: 10px; 
+            border: 2px solid transparent;
+            transition: background-color 0.3s ease, border-color 0.3s ease;
+            max-width: 400px;
+        }
+        #status { font-size: 1.1em; opacity: 0.8; }
+        #message { font-size: 1.4em; font-weight: 500; }
+        
+        #chat-container { margin-top: 15px; }
+        #chat-history { height: 100px; overflow-y: auto; border: 1px solid #444; padding: 10px; margin-bottom: 10px; background: #222; }
+        #chat-form { display: flex; }
+        #chat-input { flex-grow: 1; }
+    </style>
+</head>
+<body>
+
+    <!-- This top bar will contain both uploads and proposals -->
+    <div id="top-bar">
+        <!-- Container for proposals, will be shown by JS if any exist -->
+        <div id="proposal-container">
+            <h3>ข้อเสนอการปรับโปรแกรม</h3>
+            <div id="proposal-list">
+                <!-- Proposals will be inserted here by JavaScript -->
+            </div>
+        </div>
+
+        <!-- Form for uploading ground truth videos -->
+        <div id="upload-container">
+            <form id="upload-form">
+                <label for="video-file">อัปโหลดวิดีโอ Ground Truth:</label>
+                <input type="file" id="video-file" name="video-file" accept="video/mp4,video/mov">
+                <button type="submit">อัปโหลดและประมวลผล</button>
+                <p id="upload-status" style="margin: 0;"></p>
+            </form>
+        </div>
+    </div>
+    
+    <!-- Main area for video and avatar -->
+    <div id="main-content">
+        <div id="video-container">
+            <video id="webcam" autoplay playsinline></video>
+            <!-- The feedback panel is now inside the video container -->
+            <div id="feedback-panel">
+                <div id="status">สถานะ: กำลังเชื่อมต่อ...</div>
+                <div id="message">เริ่มออกกำลังกายได้เลยครับ</div>
+            </div>
+        </div>
+        <div id="avatar-container">
+            <!-- Three.js canvas will be inserted here by JavaScript -->
+        </div>
+    </div>
+
+    <!-- Add this inside the #top-bar div in index.html -->
+    <div id="chat-container">
+        <h3>สนทนากับ AI Assistant</h3>
+        <div id="chat-history"></div>
+        <form id="chat-form">
+            <input type="text" id="chat-input" placeholder="ถามคำถามเกี่ยวกับโปรแกรมของคุณ...">
+            <button type="submit">ส่ง</button>
+        </form>
+    </div>
+
+    <!-- Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script> <!-- MediaPipe solution -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    
+    <!-- Main Application Logic -->
+    <script type="module" src="main.js"></script>
+
+</body>
+</html>

@@ -1,0 +1,43 @@
+# Data source (not directly used by script, but good for reference)
+data:
+  user_id: "ground_truth_trainer"
+
+# Model Architecture Parameters
+model_params:
+  feature_dim: 175         # Must match feature_engineering.py
+  window_size: 48          # Larger window for more context
+  num_classes: 5           # From auto_labeler.py: CORRECT, L_ELBOW, R_ELBOW, L_KNEE, R_KNEE
+
+# Training Parameters
+training_params:
+  batch_size: 64
+  epochs: 50
+  learning_rate: 0.001
+  step: 5                  # Step size for sliding window
+  # --- Loss Weights (CRITICAL for tuning) ---
+  loss_weights:
+    anomaly: 0.5           # Weight for anomaly detection loss
+    class: 1.5             # Higher weight for getting the class right
+    reg: 1.0               # Weight for severity regression loss
+
+# Output Configuration
+output:
+  dir: "training_outputs"
+  model_name: "supervised_tcn_gru.pth"
+
+
+### **Part 4: How to Run (วิธีการใช้งาน)**
+
+# 1.  **เตรียมข้อมูล:**
+#     * **สำคัญ:** ทำตาม **ขั้นตอนที่ 1** เพื่ออัปเดต Schema ฐานข้อมูล, ล้างข้อมูลเก่า, รัน Ingestion Script ใหม่, และสุดท้าย **รัน Auto-Labeler Script** เพื่อสร้าง "เฉลย"
+#         ```bash
+#         # (Run from backend/ folder)
+#         python -m scripts.auto_labeler
+#         ```
+# 2.  **เริ่มการเทรน:**
+#     * ตรวจสอบว่าไฟล์ทั้งหมดจาก **ขั้นตอนที่ 2 และ 3** ถูกสร้าง/อัปเดตเรียบร้อยแล้ว
+#     * รันสคริปต์การเทรนใหม่ โดยชี้ไปที่ `supervised_config.yaml`
+#         ```bash
+#         # (Run from backend/ folder)
+#         python -m training.train_multitask --config training_configs/supervised_config.yaml
+        

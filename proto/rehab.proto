@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package rehab;
+
+// ข้อมูล Joint จาก BlazePose
+message Joint {
+  int32 id = 1;
+  float x = 2;
+  float y = 3;
+  float z = 4;
+  float visibility = 5;
+}
+
+// ข้อมูลในแต่ละเฟรม
+message Frame {
+  string user_id = 1;
+  string session_id = 2;
+  int64 frame_no = 3;
+  double timestamp = 4; // Unix timestamp
+  repeated Joint joints = 5; // Raw joints data
+  repeated float features = 6; // Engineered features vector
+  repeated string labels_th = 7; // Labels ภาษาไทย (ถ้ามี)
+}
+
+// ข้อมูล Metadata ของแต่ละ Session
+message Session {
+  string session_id = 1;
+  string user_id = 2;
+  string device_info = 3; // e.g., "iPhone 11, Safari"
+  double start_ts = 4;
+  double end_ts = 5;
+  bytes calibration_data = 6; // Protobuf ของ Frame ที่ใช้ calibrate
+}
+
+// ข้อมูล Caption จาก ASR
+message Caption {
+  string session_id = 1;
+  double start_time = 2;
+  double end_time = 3;
+  string text = 4;
+}

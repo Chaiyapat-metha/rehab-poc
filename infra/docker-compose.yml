@@ -1,0 +1,18 @@
+version: '3.8'
+services:
+  timescaledb:
+    image: timescale/timescaledb-ha:pg14-ts2.8-latest
+    container_name: rehab_timescaledb
+    restart: unless-stopped
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./timescaledb-data:/var/lib/postgresql/data
+      - ./timescaledb-init.sql:/docker-entrypoint-initdb.d/init.sql
+    environment:
+      - POSTGRES_USER=nonny
+      - POSTGRES_PASSWORD=nonny
+      - POSTGRES_DB=rehab_db
+
+volumes:
+  timescaledb-data:
