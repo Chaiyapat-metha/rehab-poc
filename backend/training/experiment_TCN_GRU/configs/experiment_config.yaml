@@ -1,0 +1,67 @@
+# configs/experiment_config.yaml
+
+# Dataset and data processing settings
+dataset:
+  joints: 1
+  input_dim: 175
+  window_size: 32
+  stride: 8
+  
+# Augmentation settings (will be used later, but keep in config)
+augmentation:
+  basic:
+    rot_z_deg: 15
+    jitter_std: 0.01
+  occlusion:
+    p_mask: 0.1
+
+# Model architecture settings
+model:
+  encoder: tcn_gru
+  tcn:
+    blocks: [1, 2, 3]                  # List of TCN block counts to sweep
+    channels: [256, 256, 256]          # Keep constant for now
+    kernel: 3
+    dilation_levels: [1, 2, 4, 8]      # List of dilation levels to sweep
+  pooling:
+    type: ['none', 'average', 'max']   # List of pooling types to sweep
+    pool_size: 4
+  gru:
+    layers: [1, 2, 3]                  # List of GRU layers to sweep
+    hidden: [64, 128, 256]             # List of GRU hidden units to sweep
+    dropout: 0.2
+  
+# Head for angle regression
+heads:
+  angle_regression:
+    enabled: true
+    hidden: 128
+    output_dim: 6  # 6 angles: L/R_shoulder, L/R_hip, L/R_knee
+
+# Loss function settings
+loss:
+  w_angle: 1.0 # Weight for the new angle loss
+
+# Database connection
+database:
+  host: "localhost"
+  port: 5433
+  dbname: "rehab_db"
+  user: "nonny"
+  password: "nonny"
+
+# Training loop settings
+training:
+  epochs: 120
+  batch_size: 32
+  lr: 0.001
+  weight_decay: 0.0001
+  optimizer: AdamW
+  mixed_precision: true
+  early_stop_patience: 10
+  exercise_name: "Jump squats"
+  
+# Logging settings
+logging:
+  log_dir: "results"
+  log_file: "hyperparameter_sweep.csv"

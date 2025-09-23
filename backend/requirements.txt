@@ -5,6 +5,7 @@ pyyaml
 protobuf<5,>=4.25.3
 grpcio 
 grpcio-tools
+protobuf
 mypy-protobuf
 psycopg2-binary
 timescaledb
@@ -13,6 +14,7 @@ onnx
 onnxruntime
 
 numpy
+pandas
 
 opencv-python
 mediapipe

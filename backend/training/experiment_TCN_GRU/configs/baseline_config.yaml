@@ -1,0 +1,58 @@
+# configs/baseline_config.yaml
+
+dataset:
+  joints: 1
+  input_dim: 175
+  window_size: 32
+  stride: 8
+
+augmentation:
+  basic:
+    rot_z_deg: 15
+    rot_xy_deg: 5
+    trans_std: 0.02
+    scale_range: [0.9, 1.1]
+    jitter_std: 0.01
+  occlusion:
+    p_mask: 0.1
+
+model:
+  encoder: tcn_gru
+  tcn:
+    channels: [256, 256, 256]
+    kernel: 3
+    dilation_growth: 2
+  gru:
+    hidden: 256
+    layers: 1
+    dropout: 0.2
+
+heads:
+  pos_regression:
+    enabled: true
+    hidden: 128
+  
+loss:
+  w_pos: 1.0
+  w_vel: 0.1
+
+database:
+  host: "localhost"
+  port: 5433
+  dbname: "rehab_db"
+  user: "nonny"
+  password: "nonny" 
+
+training:
+  epochs: 120
+  batch_size: 32
+  lr: 0.001
+  weight_decay: 0.0001
+  optimizer: AdamW
+  mixed_precision: true
+  early_stop_patience: 10
+  exercise_name: "Jump squats" 
+
+logging:
+  log_file: "results/logs.csv"
+  checkpoint_dir: "results/checkpoints/"
