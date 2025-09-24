@@ -36,7 +36,7 @@ heads:
   angle_regression:
     enabled: true
     hidden: 128
-    output_dim: 6  # 6 angles: L/R_shoulder, L/R_hip, L/R_knee
+    output_dim: 1 # Output a single value for BCEWithLogitsLoss
 
 # Loss function settings
 loss:

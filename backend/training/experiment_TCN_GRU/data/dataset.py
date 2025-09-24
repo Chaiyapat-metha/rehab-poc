@@ -89,11 +89,13 @@ class PoseDataset(Dataset):
         end_idx = start_idx + self.window_size
         
         window_features = self.features[start_idx:end_idx, :]
+        target_labels = self.labels[end_idx-1, :]
         
-        # The target label is for the *last frame* of the window
-        target_label = self.labels[end_idx-1, :]
-        
-        return torch.from_numpy(window_features).float(), torch.from_numpy(target_label).float()
+        # The labels from the DB are 6 normalized angle differences (0-1)
+        # We convert them to a binary vector based on a threshold
+        threshold = 0.5 # Example threshold. This should be tuned.
+        binary_labels = (target_labels > threshold).astype(np.float32)
+        return torch.from_numpy(window_features).float(), torch.from_numpy(binary_labels).float()
   
     # # Preprocessing and Augmentation methods remain the same
     # def _preprocess(self, window):
