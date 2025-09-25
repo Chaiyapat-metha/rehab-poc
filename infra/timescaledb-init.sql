@@ -50,6 +50,19 @@ CREATE TABLE IF NOT EXISTS frames (
 SELECT create_hypertable('frames', 'time', if_not_exists => TRUE, chunk_time_interval => INTERVAL '1 day');
 CREATE INDEX IF NOT EXISTS idx_session_id_time ON frames (session_id, "time" DESC);
 
+-- New table to store raw skeleton data for training
+CREATE TABLE IF NOT EXISTS training_skeletons (
+    time TIMESTAMPTZ NOT NULL,
+    video_id VARCHAR(255) NOT NULL,
+    frame_no BIGINT,
+    label VARCHAR(50) NOT NULL,
+    keypoints REAL[], -- Raw 3D coordinates (33 joints * 3 coords = 99 values)
+    visibility REAL[], -- Visibility scores for each joint
+    PRIMARY KEY (video_id, time)
+);
+
+-- Create a Hypertable on the new table
+SELECT create_hypertable('training_skeletons', 'time', if_not_exists => TRUE, chunk_time_interval => INTERVAL '1 day');
 
 -- ตารางเก็บผลลัพธ์จาก ASR
 CREATE TABLE IF NOT EXISTS captions (

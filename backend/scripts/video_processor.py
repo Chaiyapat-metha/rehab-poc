@@ -3,9 +3,9 @@ import mediapipe as mp
 from pathlib import Path
 import uuid
 from tqdm import tqdm
+import sys
 
 # Setup path to import from app module
-import sys
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 # Import our custom modules
@@ -27,6 +27,55 @@ except ImportError:
     print("Warning: mediapipe is not installed. Pose detection will not work.")
     pose_detector = None
 
+def process_video_for_training(video_path: str, label: str):
+    """
+    Processes a single video file to extract raw pose keypoints and
+    saves them to the training_skeletons table with a correct/wrong label.
+    """
+    if not pose_detector:
+        print("Error: MediaPipe Pose is not initialized.")
+        return
+
+    video_path_obj = Path(video_path)
+    if not video_path_obj.exists():
+        print(f"Error: Video file not found at {video_path}")
+        return
+
+    video_id = str(uuid.uuid4())
+    print(f"\nProcessing '{video_path_obj.name}' with label '{label}' | Video ID: {video_id}")
+
+    cap = cv2.VideoCapture(video_path)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    
+    print(f"🤸‍♂️ Starting pose extraction from video frames ({total_frames} frames)...")
+    
+    for frame_no in tqdm(range(total_frames), desc=f"Analyzing Frames for '{label}'"):
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        image_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        results = pose_detector.process(image_rgb)
+        
+        if results.pose_world_landmarks:
+            keypoints = []
+            visibilities = []
+            for landmark in results.pose_world_landmarks.landmark:
+                keypoints.extend([landmark.x, landmark.y, landmark.z])
+                visibilities.append(landmark.visibility)
+            
+            # Use the new db function to save to the training table
+            db.save_training_skeleton_to_db(
+                video_id=video_id,
+                frame_no=frame_no,
+                label=label,
+                keypoints=keypoints,
+                visibilities=visibilities
+            )
+
+    cap.release()
+    print(f"✅ Finished processing '{video_path_obj.name}'.")
+    
 def process_video(video_path: str, user_id: str = "ground_truth_trainer"):
     """
     Processes a single video file to extract pose, features, and captions,

@@ -17,7 +17,6 @@ Visibilities (33 features): เป็นค่าที่บอกว่า key
 import numpy as np
 from typing import List, Dict, Tuple
 
-
 from ..proto_generated import rehab_pb2
 
 # --- BlazePose Keypoint Indices (from MediaPipe Pose) ---

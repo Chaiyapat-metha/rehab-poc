@@ -10,7 +10,6 @@ from typing import List
 from ..proto_generated import rehab_pb2
 
 # --- Database Connection Pool ---
-# ใช้ค่าจาก environment variables ถ้ามี, หรือใช้ default สำหรับ local dev
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_NAME = os.getenv("DB_NAME", "rehab_db")
 DB_USER = os.getenv("DB_USER", "nonny") # Changed to your user
@@ -272,3 +271,28 @@ def get_frames_for_exercise(exercise_name: str) -> list:
                 }
                 frames.append(frame_dict)
     return frames
+
+def save_training_skeleton_to_db(
+    video_id: str, 
+    frame_no: int, 
+    label: str, 
+    keypoints: List[float], 
+    visibilities: List[float]
+):
+    """Saves a single frame's raw skeleton data to the training_skeletons table."""
+    sql = """
+    INSERT INTO training_skeletons (time, video_id, frame_no, label, keypoints, visibility)
+    VALUES (NOW(), %s, %s, %s, %s, %s);
+    """
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (
+                    video_id,
+                    frame_no,
+                    label,
+                    keypoints,
+                    visibilities
+                ))
+    except Exception as e:
+        print(f" -> Error saving training skeleton frame {frame_no}: {e}")

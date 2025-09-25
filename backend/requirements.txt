@@ -16,6 +16,7 @@ onnxruntime
 numpy
 pandas
 scikit-learn
+matplotlib
 
 opencv-python
 mediapipe

@@ -48,12 +48,16 @@ heads:
     enabled: true
     hidden: 128
     output_dim: 6  # 6 angles as a regression target
+  classification:
+    enabled: true
+    hidden: 64    
+    output_dim: 1
 
 # Loss function settings
 loss:
   w_pos: 1.0 # Weight for L_pos
   w_angle: 0.5 # Weight for L_angle
-
+  w_bce: 0.2 # Weight for L_bce
 # Database connection
 database:
   host: "localhost"
