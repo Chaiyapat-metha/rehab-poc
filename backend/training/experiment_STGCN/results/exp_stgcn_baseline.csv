@@ -1,0 +1,2 @@
+encoder,stgcn_channels,w_pos,w_angle,w_bce,early_stop_epoch,val_loss,test_loss,timestamp
+st_gcn,9,1.0,0.5,0.2,33,0.2492,0.7233,2025-09-26 14:04:34

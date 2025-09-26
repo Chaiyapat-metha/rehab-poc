@@ -1,0 +1,66 @@
+# rehab-poc/backend/training/experiment_STGCN/configs/stgcn_config.yaml
+
+# Configuration for ST-GCN Baseline Experiment (Loss=L_pos only)
+
+# --- DATA & PREPROCESSING SETTINGS ---
+dataset:
+  joints: 33          # MediaPipe 33 joints
+  input_dim: 3          # 3D coordinates (x, y, z)
+  window_size: 32       # T=32 frames
+  stride: 8
+  
+# --- MODEL ARCHITECTURE SETTINGS (ST-GCN Fixed) ---
+model:
+  encoder: st_gcn
+  stgcn:
+    # Based on standard ST-GCN (Yann et al., 2018)
+    channels: [64, 64, 64, 128, 128, 128, 256, 256, 256]
+    kernel_size_t: 9      # Temporal kernel size
+    graph_args:
+      layout: 'mediapipe' # Custom layout for 33 joints
+      strategy: 'spatial' # Standard spatial partitioning
+      
+# --- HEADS (Output Regression) ---
+heads:
+  pos_regression:
+    enabled: true
+    output_dim: 99       # 33 joints * 3 coords
+    hidden: 128
+  
+  # FIX: เพิ่ม Angle Regression Head
+  angle_regression:
+    enabled: true
+    output_dim: 6        # 6 angles (L/R Shoulder, L/R Hip, L/R Knee)
+    hidden: 64
+    
+  # FIX: เพิ่ม Classification Head
+  classification:
+    enabled: true
+    output_dim: 1        # Binary Classification
+    hidden: 64
+
+# --- LOSS WEIGHTS (Baseline: L_pos Only) ---
+loss:
+  w_pos: 1.0           # Weight for L_pos
+  w_angle: 0.5         # Weight for L_angle
+  w_bce: 0.2           # Weight for L_class
+
+# --- TRAINING & INFRA SETTINGS ---
+training:
+  epochs: 80
+  batch_size: 32
+  lr: 0.001 
+  weight_decay: 0.0001
+  early_stop_patience: 10
+
+# Database connection details (Same as previous experiments)
+database:
+  host: "localhost"
+  port: 5433
+  dbname: "rehab_db"
+  user: "nonny"
+  password: "nonny"
+  
+logging:
+  log_dir: "../results"
+  log_file: "exp_stgcn_baseline.csv"

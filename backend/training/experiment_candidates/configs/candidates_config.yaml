@@ -1,0 +1,93 @@
+# rehab-poc/backend/training/experiment_candidates/configs/candidates_config.yaml
+
+# --- GLOBAL DATA & PREPROCESSING ---
+dataset:
+  joints: 33
+  input_dim: 3
+  window_size: 32
+  stride: 8
+
+# --- AUGMENTATION (Applied to ALL Models) ---
+augmentation:
+  enabled: true
+  rotation:
+    p_rot: 0.5
+    rot_z_deg: 15.0
+    rot_xy_deg: 5.0
+  jitter:
+    p_jitter: 0.5
+    sigma_scale: 0.005 # sigma = 0.005 * scale
+  occlusion:
+    p_occ: 0.3
+    k_range: [1, 4] # Mask 1 to 4 joints
+
+# --- HEADS (Common to ALL Models) ---
+heads:
+  pos_regression:
+    output_dim: 99
+  angle_regression:
+    output_dim: 6
+  classification:
+    output_dim: 1
+
+# --- FIXED HYPERPARAMETERS (Common to ALL Models) ---
+training:
+  epochs: 80
+  batch_size: 32
+  lr: 0.001
+  weight_decay: 0.0001
+  early_stop_patience: 10
+  grad_clip: 1.0
+
+# --- LOSS WEIGHTS (Common to ALL Models) ---
+loss:
+  w_pos: 1.0
+  w_angle: 0.5
+  w_bce: 0.2
+
+# --- ARCHITECTURE-SPECIFIC CONFIGS (Used by model_archs.py) ---
+arch_configs:
+  TCN_GRU_BASELINE: &TCN_GRU_BASELINE_ANCHOR # <-- FIX: กำหนด Anchor ให้บล็อกหลัก
+    tcn:
+      blocks: 1
+      dilations: [1, 1, 1]
+      kernel_size: 3
+    gru: &TCN_GRU_GRUPART # <-- FIX: กำหนด Anchor ให้บล็อกย่อย GRU
+      layers: 1
+      hidden: 256
+      bidirectional: false
+      dropout: 0.2 
+
+  BIGRU_ATTENTION: &BIGRU_ATTENTION_ANCHOR # <-- FIX: กำหนด Anchor ให้บล็อกหลัก
+    gru: &BIGRU_ATTENTION_GRUPART # <-- FIX: กำหนด Anchor ให้บล็อกย่อย GRU
+      layers: 2
+      hidden: 256
+      bidirectional: true
+      dropout: 0.2 
+    attention: &BIGRU_ATTENTION_ATTPART # <-- FIX: กำหนด Anchor ให้บล็อกย่อย ATTENTION
+      heads: 4
+      head_dim: 128
+ 
+  STGCN_COMMON: &STGCN_COMMON_ANCHOR # <-- FIX: กำหนด Anchor ให้ STGCN
+    channels: [64, 128, 256] 
+    kernel_size_t: 9
+
+  STGCN_ATTENTION:
+    stgcn: *STGCN_COMMON_ANCHOR 
+    attention: *BIGRU_ATTENTION_ATTPART 
+
+  STGCN_GRU:
+    stgcn: *STGCN_COMMON_ANCHOR
+    gru: *TCN_GRU_GRUPART 
+
+# --- INFRA ---
+database:
+  host: "localhost"
+  port: 5433
+  dbname: "rehab_db"
+  user: "nonny"
+  password: "nonny"
+  
+logging:
+  log_dir: "results"
+  log_file: "candidates_full_sweep.csv"

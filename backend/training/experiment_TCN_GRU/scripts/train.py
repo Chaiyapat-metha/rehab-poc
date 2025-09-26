@@ -123,7 +123,7 @@ def main():
     
     print("\nAll experiments finished!")
 
-def log_results(config, model_config, val_loss, test_loss, metrics):
+def log_results(config, model_config, val_loss, test_loss):
     """Logs the results of a single experiment to a CSV file."""
     log_dir = os.path.join('..', 'results')
     if not os.path.exists(log_dir):
@@ -133,8 +133,7 @@ def log_results(config, model_config, val_loss, test_loss, metrics):
     file_exists = os.path.isfile(log_file)
     with open(log_file, 'a') as f:
         if not file_exists:
-            f.write("tcn_blocks,tcn_dilations,pooling_type,gru_layers,gru_units,val_loss,test_loss,accuracy,precision,recall,f1,timestamp\n")
-        
+            f.write("tcn_blocks,tcn_dilations,pooling_type,gru_layers,gru_units,val_loss,test_loss,timestamp\n")
         timestamp = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
         f.write(f"{model_config['model']['tcn']['blocks']},"
                 f"{model_config['model']['tcn']['dilation_levels']},"
@@ -142,12 +141,7 @@ def log_results(config, model_config, val_loss, test_loss, metrics):
                 f"{model_config['model']['gru']['layers']},"
                 f"{model_config['model']['gru']['hidden']},"
                 f"{val_loss:.4f},"
-                f"{test_loss:.4f},"
-                f"{metrics['accuracy']:.4f},"
-                f"{metrics['precision']:.4f},"
-                f"{metrics['recall']:.4f},"
-                f"{metrics['f1']:.4f},"
-                f"{timestamp}\n")
+                f"{test_loss:.4f},{timestamp}\n")
 
 if __name__ == '__main__':
     main()
