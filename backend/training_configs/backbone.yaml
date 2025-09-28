@@ -1,0 +1,29 @@
+# Configuration for Training the Anomaly Detection Autoencoder
+
+data:
+  # The step size for the sliding window across frames
+  step: 1
+
+model_params:
+  # The number of features in each frame (from feature_engineering.py)
+  # 33 joints * (x,y,z,vis) + 27 angles = 132 + 27 = 159
+  feature_dim: 175
+  
+  # The size of the compressed representation
+  latent_dim: 64
+  
+  # The number of frames in each window
+  window_size: 32
+
+training_params:
+  batch_size: 64
+  epochs: 50
+  learning_rate: 0.001
+
+output:
+  # Directory to save the trained model
+  dir: "training_outputs"
+  # Filename for the PyTorch model weights
+  model_name_pth: "autoencoder_tcn.pth"
+  # Filename for the exported ONNX model
+  model_name_onnx: "autoencoder_tcn.onnx"
