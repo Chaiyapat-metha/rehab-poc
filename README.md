@@ -10,6 +10,7 @@
 <p align="center">
   <img src="https://github.com/Chaiyapat-metha/rehab-poc/blob/main/Application_photo.png?raw=true" width="600">
 </p>
+
 ---
 
 <h2>📌 1 — เป้าหมายระบบ (Goal)</h2>
