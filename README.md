@@ -1,141 +1,205 @@
-AI-Powered Adaptive Physical Therapy System (Rehab-PoC)
-1. Abstract
-This project introduces a robust, low-latency system designed to assist elderly patients with unsupervised physical therapy (PT) exercises. Utilizing a TCN+GRU Multi-task Network, the system performs real-time 3D pose correction, identifying joint deviations, quantifying errors in degrees/mm, and providing immediate TTS feedback. The core innovation is the integration of an Adaptive Threshold Controller and an LLM-based RAG Chain for personalized difficulty adjustment and long-term progress monitoring. The modular ONNX deployment ensures high performance and scalability.
+<!-- README.md -->
 
-2. Introduction: Problem Statement
-Current geriatric physiotherapy models lack effective remote tracking and personalized guidance, leading to poor patient compliance and risk of performing exercises incorrectly. This system directly addresses these gaps:
+<h1 align="center">🤸 Rehab Pose Correction System</h1>
 
-Lack of Real-time Guidance: Elderly patients require immediate correction, which standard video observation cannot provide.
+<p align="center">
+  ระบบตรวจจับท่าออกกำลังกาย + ให้ฟีดแบคแบบเรียลไทม์ ด้วย <b>TCN+GRU Backbone</b> และ Multi-task Heads  
+  (Position / Angle / Classification)
+</p>
 
-Accessibility: The system provides synchronized audio and visual feedback (TTS and joint highlighting) to assist users with reduced visual acuity.
+---
 
-Personalization: The platform allows for monitoring individual progress and adapting difficulty thresholds over time, mimicking a dedicated personal therapist.
+<h2>📌 1 — เป้าหมายระบบ (Goal)</h2>
 
-3. Design: Model Architecture & Data Pipeline
-The system utilizes a specialized architecture tailored for sequential motion analysis and deployment efficiency.
+<ul>
+  <li>รับ input: sequence ของ MediaPipe joints <code>(B, T, V=33, C=3)</code></li>
+  <li>ประมวลผลด้วย Backbone (TCN×GRU) เพียงครั้งเดียวต่อ window → ส่งผลให้ heads เล็ก ๆ แยกทำงาน</li>
+  <li><b>Heads</b>:
+    <ol>
+      <li><b>pos_head</b>: per-joint regression (99 dims → reshape (V,3))</li>
+      <li><b>angle_head</b>: regress angles เฉพาะที่เลือก</li>
+      <li><b>class_head</b>: binary/ multi-class classification (correct/wrong)</li>
+    </ol>
+  </li>
+  <li>Inference API คืนค่า JSON ให้ client ใช้:
+    <ul>
+      <li>ข้อความบนจอ</li>
+      <li>TTS (text/SSML)</li>
+      <li>Highlight joints ที่ผิดบนภาพ</li>
+    </ul>
+  </li>
+  <li>ThresholdController: ปรับ threshold ต่อผู้ใช้จาก user_history พร้อม UX ให้ยืนยัน</li>
+  <li>Training pipeline: config-driven ต่อ exercise, mapping labels + augmentation</li>
+</ul>
 
-A. Data Collection and Storage
-Feature Extraction: MediaPipe BlazePose (Heavy Model) extracts 33 Keypoints in World Coordinates (X, Y, Z) from training videos.
+---
 
-Database: Data is persisted in TimescaleDB (PostgreSQL) for robust storage and efficient time-series indexing of joint data (stored as Protobuf BYTEA).
+<h2>📂 2 — Data / Config Contract</h2>
 
-Augmentation: A Config-Driven Synthetic Augmentation Pipeline creates diverse Wrong Examples (e.g., insufficient depth, shoulder offset) and automatically updates multiclass labels.
+<p>ระบบใช้ config ไฟล์:</p>
 
-B. Model Architecture (TCN+GRU)
-The model employs a single Shared Backbone for temporal feature extraction, feeding modular diagnostic heads:
+<ul>
+  <li><code>model_config.yaml</code> → นิยาม backbone, heads, training setup</li>
+  <li><code>exercises.yaml</code> → mapping ของแต่ละ exercise → joints, angles, metrics</li>
+  <li><code>augmentation.yaml</code> → global/per-exercise augmentation</li>
+</ul>
 
-Component
+<pre>
+dataset.py:
+(data: BxTxVx3,
+ target_pos: Bx99,
+ target_angles: BxN_angles,
+ target_class: Bx1,
+ exercise_id: list[str])
 
-Function
+augmentation.py:
+- rotation, jitter, occlusion
+- per-exercise augmentation → อัพเดท ground-truth
+</pre>
 
-Loss Function
+---
 
-Output
+<h2>🧠 3 — Model Architecture</h2>
 
-Backbone
+<ul>
+  <li>Backbone = <b>TCNBlock + GRU</b> → shared feature (B,256)</li>
+  <li><b>pos_head</b>: MLP → (V,3), Loss=MSE</li>
+  <li><b>angle_head</b>: MLP → angles + logvar, Loss=NLL</li>
+  <li><b>class_head</b>: MLP → 1 logit, Loss=BCEWithLogits</li>
+  <li>Multi-task loss: <code>L_total = Σ wᵢ * Lᵢ</code></li>
+</ul>
 
-TCN + GRU (T=16 Window)
+<pre>
+          joints (x,y,z)
+                 ↓
+          ┌─────────────┐
+          │   Backbone  │  (TCN+GRU)
+          └──────┬──────┘
+                 │
+   ┌─────────────┼─────────────┐
+   ▼             ▼             ▼
+ pos_head    angle_head    class_head
+</pre>
 
-N/A
+---
 
-Shared Feature Vector (B×256)
+<h2>🏋️ 4 — Training & Evaluation</h2>
 
-Class Head
+<ul>
+  <li>ใช้ dataset masks → ignore missing labels</li>
+  <li>log per-head metrics</li>
+  <li>save checkpoints แยก backbone + heads</li>
+  <li>export ONNX (backbone.onnx, head.onnx)</li>
+  <li>รองรับ reproducibility (seed, deterministic)</li>
+</ul>
 
-Correctness Prediction (0/1 or 0/1/2)
+---
 
-BCEWithLogitsLoss or CrossEntropyLoss
+<h2>🚀 5 — Inference & API</h2>
 
-Logit or Vector of Classes
+<h3>Request:</h3>
 
-Angle Head
+<pre>
+{
+  "user_id": "u123",
+  "exercise_id": "jump_squat",
+  "window_frames": [[[x,y,z], ...], ...],
+  "request": { "metrics": ["pos","angles","class"], "tts": true }
+}
+</pre>
 
-Quantified Error Estimation
+<h3>Response:</h3>
 
-Gaussian NLL Loss (Predicts Mean and LogVar)
+<pre>
+{
+  "is_wrong": true,
+  "class_prob": 0.12,
+  "angles": { "LEFT_KNEE": 82.0 },
+  "wrong_joints": [14],
+  "tts_text": "ข้อศอกงอไม่พอค่ะ",
+  "display_text": "ข้อศอกงอไม่พอ — 30° เกิน threshold",
+  "timestamp": "2025-09-28T12:00:00Z"
+}
+</pre>
 
-Vector of Predicted Angles
+---
 
-Positional Head
+<h2>🎤 6 — Feedback Engine</h2>
 
-3D Joint Coordinate Prediction
+<ul>
+  <li>Template-based messages (Thai, randomized pool)</li>
+  <li>TTS + OpenCV highlight</li>
+  <li>Debounce/Throttle per rep</li>
+  <li>LLM ใช้เฉพาะ session summary (ไม่ใช้ realtime)</li>
+</ul>
 
-L1Loss
+---
 
-99D Predicted Position Vector
+<h2>⚙️ 7 — ThresholdController</h2>
 
-4. Workflow: End-to-End System Flow
-A. Training and Deployment Workflow (Offline)
-Video Assets 
-Ingestion/Augment
-​
- TimescaleDB 
-Stratified Load
-​
- TCN+GRU Training 
-Save Best
-​
- ONNX Export 
-FastAPI
-​
- Production Weights
-B. Real-time Inference and Feedback Loop (Online)
-Data Streaming (Frontend): 3D Keypoints are windowed (T=16) and streamed via WebSocket to Backend.
+<ul>
+  <li>เก็บ per-user thresholds</li>
+  <li>API:
+    <ul>
+      <li><code>GET /user/{id}/thresholds</code></li>
+      <li><code>POST /user/{id}/thresholds/propose</code></li>
+      <li><code>POST /user/{id}/thresholds/commit</code></li>
+    </ul>
+  </li>
+  <li>rules: smoothing, min reps, auto adjust</li>
+</ul>
 
-Model Inference (Backend): ONNX Runtime runs input through Backbone and Heads concurrently.
+---
 
-Decision & Feedback: Predicted Angles/Class → Threshold Controller checks Pass/Fail → Feedback Engine generates TTS Text and Wrong Joint Indices.
+<h2>🐳 8 — วิธีรันระบบ (Docker)</h2>
 
-Client Action: WebSocket sends Feedback → Frontend highlights joint in red on Canvas Overlay and plays audio (TTS) after 90 frames (3s) of sustained error.
+<pre>
+cd infra
+docker-compose up -d
+</pre>
 
-5. Experiments and Results
-Our primary goal was achieving high classification accuracy while maintaining quantifiable error metrics necessary for personalized thresholds.
+จะเปิด TimescaleDB ที่ <code>localhost:5433</code>
 
-Metric
+---
 
-Significance
+<h2>📜 9 — Generate Proto</h2>
 
-Result
+<pre>
+cd proto
+bash generate_protos.sh
+</pre>
 
-Classification AUC
+สคริปต์จะ compile <code>rehab.proto</code> → เก็บใน <code>backend/app/proto_generated/</code>
 
-Area Under Curve (Correctness)
+---
 
-∼0.85−0.94
+<h2>🖥️ 10 — Run Backend API</h2>
 
-Angle MAE
+<pre>
+cd backend
+uvicorn app.main:app --reload --port 8011
+</pre>
 
-Mean Absolute Error in Degrees
+API หลักอยู่ที่ <code>http://localhost:8011</code>  
+Swagger UI: <code>http://localhost:8011/docs</code>
 
-∼15−20
+---
 
-Positional MPJPE (Loss)
+<h2>📊 11 — Frontend Integration</h2>
 
-Accuracy of 3D Joint Coordinates
+- Client รับ JSON feedback  
+- แสดงข้อความ + TTS  
+- Highlight joints บนภาพด้วย OpenCV  
+- แสดง summary ที่ <code>frontend/src/components/ResultsScreen.jsx</code>  
 
-∼4
+---
 
-The Multi-task model achieved high discriminative power (AUC) while simultaneously reconstructing the pose with low MPJPE loss.
+<h2>👩‍💻 Contributors</h2>
 
-Fig. 3(a): Visual Proof of Quantified Error (Angle Prediction)
+<ul>
+  <li><b>Lead Dev:</b> chaiyapat metha</li>
+  <li><b>Stack:</b> FastAPI, PyTorch, ONNX, TimescaleDB, Docker</li>
+</ul>
 
-Fig. 3(b): Demonstration of Adaptive Threshold Adjustment based on user success rate.
-
-6. Inference and Adaptive Control
-A. Modular ONNX Inference
-We utilize ONNX Runtime to decouple the AI components:
-
-Efficiency: The shared Backbone.onnx is loaded only once.
-
-Scalability: New exercises require only minimal Head.onnx files to be deployed, significantly reducing resource consumption and update time.
-
-B. Adaptive Threshold Control
-The system implements the Threshold Controller (Req. 8) which proposes a change in difficulty (tighten or relax the angle error tolerance) after analyzing Success Rate over Window K reps. The user must confirm the change before it is committed to the user_thresholds DB.
-
-7. Conclusion
-The Rehab-PoC project successfully delivered a robust, full-stack AI solution for physiotherapy. By integrating quantified error diagnosis and personalized adaptation via a multi-task model, the system transcends simple monitoring to actively guide and motivate user progress. The final architecture is highly efficient and ready for large-scale deployment.
-
-8. Reference
-K. Gong, J. Zhang, and J. Feng, “PoseAug: A Differentiable Pose Augmentation Framework for 3D Human Pose Estimation,” in Proc. IEEE/CVF Conf. on Computer Vision and Pattern Recognition (CVPR), 2021.
-
-S. Shin, J. Kim, E. Halilaj, and M. J. Black, “WHAM: Reconstructing World-grounded Humans with Accurate 3D Motion,” GitHub repository, 2024.
+---
+<p align="center">💪 ทำให้การฟื้นฟูร่างกายเป็นเรื่องง่าย — AI Pose Correction</p>
