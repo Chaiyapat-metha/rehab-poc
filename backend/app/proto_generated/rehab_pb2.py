@@ -14,13 +14,19 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0brehab.proto\x12\x05rehab\"H\n\x05Joint\x12\n\n\x02id\x18\x01 \x01(\x05\x12\t\n\x01x\x18\x02 \x01(\x02\x12\t\n\x01y\x18\x03 \x01(\x02\x12\t\n\x01z\x18\x04 \x01(\x02\x12\x12\n\nvisibility\x18\x05 \x01(\x02\"\x94\x01\n\x05\x46rame\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x12\n\nsession_id\x18\x02 \x01(\t\x12\x10\n\x08\x66rame_no\x18\x03 \x01(\x03\x12\x11\n\ttimestamp\x18\x04 \x01(\x01\x12\x1c\n\x06joints\x18\x05 \x03(\x0b\x32\x0c.rehab.Joint\x12\x10\n\x08\x66\x65\x61tures\x18\x06 \x03(\x02\x12\x11\n\tlabels_th\x18\x07 \x03(\t\"\x7f\n\x07Session\x12\x12\n\nsession_id\x18\x01 \x01(\t\x12\x0f\n\x07user_id\x18\x02 \x01(\t\x12\x13\n\x0b\x64\x65vice_info\x18\x03 \x01(\t\x12\x10\n\x08start_ts\x18\x04 \x01(\x01\x12\x0e\n\x06\x65nd_ts\x18\x05 \x01(\x01\x12\x18\n\x10\x63\x61libration_data\x18\x06 \x01(\x0c\"Q\n\x07\x43\x61ption\x12\x12\n\nsession_id\x18\x01 \x01(\t\x12\x12\n\nstart_time\x18\x02 \x01(\x01\x12\x10\n\x08\x65nd_time\x18\x03 \x01(\x01\x12\x0c\n\x04text\x18\x04 \x01(\tb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0brehab.proto\x12\x05rehab\"H\n\x05Joint\x12\n\n\x02id\x18\x01 \x01(\x05\x12\t\n\x01x\x18\x02 \x01(\x02\x12\t\n\x01y\x18\x03 \x01(\x02\x12\t\n\x01z\x18\x04 \x01(\x02\x12\x12\n\nvisibility\x18\x05 \x01(\x02\"\x94\x01\n\x05\x46rame\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x12\n\nsession_id\x18\x02 \x01(\t\x12\x10\n\x08\x66rame_no\x18\x03 \x01(\x03\x12\x11\n\ttimestamp\x18\x04 \x01(\x01\x12\x1c\n\x06joints\x18\x05 \x03(\x0b\x32\x0c.rehab.Joint\x12\x10\n\x08\x66\x65\x61tures\x18\x06 \x03(\x02\x12\x11\n\tlabels_th\x18\x07 \x03(\t\"\x7f\n\x07Session\x12\x12\n\nsession_id\x18\x01 \x01(\t\x12\x0f\n\x07user_id\x18\x02 \x01(\t\x12\x13\n\x0b\x64\x65vice_info\x18\x03 \x01(\t\x12\x10\n\x08start_ts\x18\x04 \x01(\x01\x12\x0e\n\x06\x65nd_ts\x18\x05 \x01(\x01\x12\x18\n\x10\x63\x61libration_data\x18\x06 \x01(\x0c\"Q\n\x07\x43\x61ption\x12\x12\n\nsession_id\x18\x01 \x01(\t\x12\x12\n\nstart_time\x18\x02 \x01(\x01\x12\x10\n\x08\x65nd_time\x18\x03 \x01(\x01\x12\x0c\n\x04text\x18\x04 \x01(\t\"\x90\x01\n\x0eTrainingLabels\x12\x13\n\x0b\x65xercise_id\x18\x01 \x01(\t\x12\x13\n\x0blabel_class\x18\x02 \x01(\x05\x12\x1b\n\x13label_angles_vector\x18\x03 \x03(\x02\x12\x18\n\x10label_pos_vector\x18\x04 \x03(\x02\x12\x1d\n\x15is_valid_for_training\x18\x05 \x01(\x08\"\xf8\x03\n\x0fInferenceResult\x12\x13\n\x0b\x65xercise_id\x18\x01 \x01(\t\x12\x10\n\x08is_wrong\x18\x02 \x01(\x08\x12\x18\n\x10\x63lass_confidence\x18\x03 \x01(\x02\x12\x1c\n\x14wrong_joints_indices\x18\x04 \x03(\x05\x12\x42\n\x0fjoint_errors_mm\x18\x05 \x03(\x0b\x32).rehab.InferenceResult.JointErrorsMmEntry\x12=\n\x0c\x61ngle_values\x18\x06 \x03(\x0b\x32\'.rehab.InferenceResult.AngleValuesEntry\x12=\n\x0c\x61ngle_errors\x18\x07 \x03(\x0b\x32\'.rehab.InferenceResult.AngleErrorsEntry\x12\x10\n\x08tts_text\x18\x08 \x01(\t\x12\x14\n\x0c\x64isplay_text\x18\t \x01(\t\x1a\x34\n\x12JointErrorsMmEntry\x12\x0b\n\x03key\x18\x01 \x01(\x05\x12\r\n\x05value\x18\x02 \x01(\x02:\x02\x38\x01\x1a\x32\n\x10\x41ngleValuesEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x02:\x02\x38\x01\x1a\x32\n\x10\x41ngleErrorsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x02:\x02\x38\x01\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'rehab_pb2', _globals)
 if _descriptor._USE_C_DESCRIPTORS == False:
   DESCRIPTOR._options = None
+  _globals['_INFERENCERESULT_JOINTERRORSMMENTRY']._options = None
+  _globals['_INFERENCERESULT_JOINTERRORSMMENTRY']._serialized_options = b'8\001'
+  _globals['_INFERENCERESULT_ANGLEVALUESENTRY']._options = None
+  _globals['_INFERENCERESULT_ANGLEVALUESENTRY']._serialized_options = b'8\001'
+  _globals['_INFERENCERESULT_ANGLEERRORSENTRY']._options = None
+  _globals['_INFERENCERESULT_ANGLEERRORSENTRY']._serialized_options = b'8\001'
   _globals['_JOINT']._serialized_start=22
   _globals['_JOINT']._serialized_end=94
   _globals['_FRAME']._serialized_start=97
@@ -29,4 +35,14 @@ if _descriptor._USE_C_DESCRIPTORS == False:
   _globals['_SESSION']._serialized_end=374
   _globals['_CAPTION']._serialized_start=376
   _globals['_CAPTION']._serialized_end=457
+  _globals['_TRAININGLABELS']._serialized_start=460
+  _globals['_TRAININGLABELS']._serialized_end=604
+  _globals['_INFERENCERESULT']._serialized_start=607
+  _globals['_INFERENCERESULT']._serialized_end=1111
+  _globals['_INFERENCERESULT_JOINTERRORSMMENTRY']._serialized_start=955
+  _globals['_INFERENCERESULT_JOINTERRORSMMENTRY']._serialized_end=1007
+  _globals['_INFERENCERESULT_ANGLEVALUESENTRY']._serialized_start=1009
+  _globals['_INFERENCERESULT_ANGLEVALUESENTRY']._serialized_end=1059
+  _globals['_INFERENCERESULT_ANGLEERRORSENTRY']._serialized_start=1061
+  _globals['_INFERENCERESULT_ANGLEERRORSENTRY']._serialized_end=1111
 # @@protoc_insertion_point(module_scope)

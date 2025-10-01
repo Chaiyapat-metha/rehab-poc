@@ -1,0 +1,31 @@
+# File: .\backend\training\training_configs\augmentation.yaml
+
+global:
+  # Augmentations applied to all exercises
+  prob_rotate: 0.5
+  rotation_deg: [-15, 15]
+  prob_jitter: 0.5
+  jitter_sigma_norm: 0.005 # Noise sigma relative to normalization scale
+  prob_occlude: 0.3
+  occlude_joints_count: 5 # Max joints to randomly hide
+
+per_exercise:
+  Stretching_upper_trapezius:
+    # Rule 1: create wrong examples by offsetting shoulder height (classification label 1 or 2)
+    prob_shoulder_level_offset: 0.5
+    shoulder_level_offset_mm_range: [5, 30]
+    target_class_offset: [1, 2] # Map to 'left_high' (1) or 'right_high' (2)
+    
+    # Rule 2: reduce elbow flexion (affects regression label: LEFT/RIGHT_ELBOW_ANGLE)
+    prob_reduce_elbow_flexion: 0.5
+    elbow_reduce_deg_range: [-20, -5] # Negative means reducing the angle (less flexed)
+    
+  Jump_squats:
+    # Rule 1: simulate insufficient depth (classification label 1: wrong_shallow_depth)
+    prob_add_knee_bias: 0.3
+    knee_bias_deg_range: [-15, -5]  # Negative means shallower squat (less knee flexion)
+    target_class_bias: 1
+    
+    # Rule 2: Occlude feet (visual challenge, but keeps pose correct)
+    prob_occlude_feet: 0.1
+    occlude_specific_joints: [29, 30, 31, 32] # Left and Right Heels/Ankles (MediaPipe indices)

@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Pose Inference Visualizer (Jump Squats)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0d1117; color: #c9d1d9; }
+        .card { background-color: #161b22; border: 1px solid #30363d; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2); }
+        .video-container { position: relative; width: 100%; max-width: 640px; }
+        #video, #output-canvas { transform: scaleX(-1); border-radius: 8px; }
+        #output-canvas { position: absolute; top: 0; left: 0; }
+        .info-box { border-left: 4px solid #5898e8; }
+    </style>
+    <!-- TensorFlow/MediaPipe/ONNX Runtime Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
+    <!-- 💡 SOLUTION: เพิ่ม CPU Backend (เพื่อให้ Fallback ทำงาน) -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-cpu"></script> 
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+</head>
+<body>
+
+<div class="min-h-screen p-4 flex flex-col items-center">
+    <h1 class="text-3xl font-bold text-blue-400 mb-4">ONNX Model Live Tester (Jump Squats)</h1>
+    <div class="text-sm text-gray-400 mb-6">Window Size: T=16 | Model: TCN+GRU</div>
+
+    <div class="video-container card mb-6 p-2">
+        <video id="video" autoplay playsinline muted class="w-full h-full"></video>
+        <canvas id="output-canvas" class="w-full h-full"></canvas>
+        <div id="loading-indicator" class="absolute inset-0 flex items-center justify-center bg-black bg-opacity-70 text-lg rounded-lg">
+            Loading AI Models...
+        </div>
+    </div>
+
+    <div class="w-full max-w-lg mb-6 flex justify-center space-x-4">
+        <button id="start-btn" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-6 rounded-lg transition duration-150" onclick="toggleProcessing(true)">
+            Start Camera & Detection
+        </button>
+        <button id="stop-btn" class="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-6 rounded-lg transition duration-150" onclick="toggleProcessing(false)" disabled>
+            Stop & Print Results
+        </button>
+    </div>
+
+    <!-- Output Display -->
+    <div id="output-panel" class="w-full max-w-lg p-4 card hidden">
+        <h2 class="text-xl font-semibold mb-3">Inference Output Metrics</h2>
+        <div id="inference-status" class="text-yellow-400 mb-3">Status: Awaiting first window...</div>
+        
+        <div class="space-y-2">
+            <div class="info-box p-2">
+                <div class="text-sm text-gray-400">Class Probability (Correctness)</div>
+                <div id="class-prob" class="text-lg font-mono text-white">-</div>
+            </div>
+            <div class="info-box p-2">
+                <div class="text-sm text-gray-400">Angle Mean Vector (3 Angles: Knee L/R, Hip Bend)</div>
+                <div id="angle-mean" class="text-sm font-mono text-gray-300 break-words">-</div>
+            </div>
+            <div id="total-frames" class="text-xs text-gray-500 mt-3">Frames Processed: 0</div>
+        </div>
+    </div>
+
+    <div id="error-message" class="text-red-500 mt-4 p-3 card hidden"></div>
+</div>
+
+<script>
+    // --- Configuration ---
+    const WINDOW_SIZE = 16;
+    const EXERCISE_ID = "Jump_squats";
+    const MODEL_BASE_PATH = "../../weights/"; 
+    
+    const MODEL_PATHS = {
+        BACKBONE: MODEL_BASE_PATH + "backbone.onnx",
+        CLASS_HEAD: MODEL_BASE_PATH + `${EXERCISE_ID}_class.onnx`,
+        ANGLE_HEAD: MODEL_BASE_PATH + `${EXERCISE_ID}_angle.onnx`
+    };
+
+    // --- Global State ---
+    let detector = null;
+    let onnxSessions = {};
+    let isProcessing = false;
+    let animationFrameId = null;
+    let frameCounter = 0;
+    
+    // Deque structure simulation for the pose window
+    const poseWindow = []; 
+
+    // --- DOM Elements ---
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('output-canvas');
+    const ctx = canvas.getContext('2d');
+    
+    // --- Helper Constants for Drawing (Based on MediaPipe) ---
+    const KEYPOINT_INDICES = {
+        'left_shoulder': 11, 'right_shoulder': 12, 'left_elbow': 13, 'right_elbow': 14,
+        'left_wrist': 15, 'right_wrist': 16, 
+        'left_hip': 23, 'right_hip': 24, 'left_knee': 25, 'right_knee': 26, 
+        'left_ankle': 27, 'right_ankle': 28, 'left_heel': 29, 'right_heel': 30,
+        'left_foot_index': 31, 'right_foot_index': 32
+    };
+
+    const JOINT_CONNECTIONS = [
+        ['left_shoulder', 'right_shoulder'], ['left_shoulder', 'left_hip'], ['right_shoulder', 'right_hip'],
+        ['left_hip', 'right_hip'], ['left_shoulder', 'left_elbow'], ['left_elbow', 'left_wrist'],
+        ['right_shoulder', 'right_elbow'], ['right_elbow', 'right_wrist'], ['left_hip', 'left_knee'], 
+        ['left_knee', 'left_ankle'], ['right_hip', 'right_knee'], ['right_knee', 'right_ankle']
+    ];
+
+    
+    // --- Core Functions ---
+
+    async function loadONNX() {
+        document.getElementById('loading-indicator').innerText = "Loading ONNX Runtimes...";
+        
+        // 💡 SOLUTION: ใช้ Execution Provider ที่เป็น Single-threaded ('wasm') 
+        const sessionOptions = {
+            executionProviders: ['wasm'], // 💡 Force single-threaded WASM for stability
+            freeDimensionOverrides: { 'batch_size': 1, 'T': 16 } // Override dynamic dimensions
+        };
+
+        try {
+            // โหลด Backbone
+            onnxSessions.backbone = await ort.InferenceSession.create(MODEL_PATHS.BACKBONE, sessionOptions);
+            
+            // โหลด Heads
+            onnxSessions.class_head = await ort.InferenceSession.create(MODEL_PATHS.CLASS_HEAD, sessionOptions);
+            onnxSessions.angle_head = await ort.InferenceSession.create(MODEL_PATHS.ANGLE_HEAD, sessionOptions);
+            
+            document.getElementById('loading-indicator').innerText = "AI Models Ready. Press Start.";
+        } catch (e) {
+            document.getElementById('error-message').innerText = `ONNX Load Error: Check paths and file existence. ${e.message}`;
+            document.getElementById('error-message').classList.remove('hidden');
+            document.getElementById('loading-indicator').classList.add('hidden');
+            throw e;
+        }
+    }
+
+    async function setupCameraAndPose() {
+        document.getElementById('loading-indicator').innerText = "Starting Camera and Pose Detector...";
+        
+        // 💡 SOLUTION: จัดการ WebGL Error และ Fallback ไปที่ CPU
+        try {
+            await tf.setBackend('cpu'); // Force CPU startup
+            await tf.ready();
+            console.log("TF.js Backend: CPU");
+        } catch (e) {
+            // Fallback (ถ้า CPU fail ให้ลอง WebGL)
+            await tf.setBackend('webgl');
+            await tf.ready();
+            console.log("TF.js Backend: WebGL");
+        }
+
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+        video.srcObject = stream;
+        
+        await new Promise((resolve) => {
+            video.onloadedmetadata = () => {
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                resolve(true);
+            };
+        });
+        video.play();
+
+        const model = poseDetection.SupportedModels.BlazePose;
+        const detectorConfig = { 
+            runtime: 'mediapipe', 
+            solutionPath: 'https://cdn.jsdelivr.net/npm/@mediapipe/pose', 
+            modelType: 'full' 
+        };
+        detector = await poseDetection.createDetector(model, detectorConfig);
+        
+        document.getElementById('loading-indicator').classList.add('hidden');
+    }
+    
+    // Converts 3D Keypoints (33x3) to ONNX Input Tensor (B, T, V, C)
+    function prepareInputTensor(window) {
+        // ขนาดของ Float32Array จะเป็น T * V * C
+        const windowArray = new Float32Array(WINDOW_SIZE * 33 * 3);
+        
+        // Convert array of arrays to flattened Float32Array
+        let offset = 0;
+        for (const frame of window) { // Loop through T frames (frame = Array 33x3)
+            
+            // 💡 SOLUTION: Loop ผ่าน 33 Joints และ 3 Coordinates
+            for (let i = 0; i < 33; i++) { 
+                const jointCoords = frame[i]; // jointCoords คือ [x, y, z] ที่ถูก Sanitize แล้ว
+                
+                // เราต้องมั่นใจว่า jointCoords เป็น Array ที่มี 3 องค์ประกอบจริงๆ
+                if (Array.isArray(jointCoords) && jointCoords.length === 3) {
+                    windowArray[offset++] = jointCoords[0]; 
+                    windowArray[offset++] = jointCoords[1]; 
+                    windowArray[offset++] = jointCoords[2]; 
+                } else {
+                    // หาก Sanitize ล้มเหลว (ไม่ควรเกิดขึ้น) ให้ใช้ Zero Pad
+                    windowArray[offset++] = 0.0;
+                    windowArray[offset++] = 0.0;
+                    windowArray[offset++] = 0.0;
+                }
+            }
+        }
+        
+        return new ort.Tensor('float32', windowArray, [1, WINDOW_SIZE, 33, 3]);
+    }
+
+    async function runInference(inputTensor) {
+        // 1. Backbone Inference
+        const backboneOutput = await onnxSessions.backbone.run({ 'input_data': inputTensor });
+        const sharedFeature = backboneOutput.shared_feature;
+
+        // 2. Head Inferences (Run in parallel for speed)
+        const [classOutput, angleOutput] = await Promise.all([
+            onnxSessions.class_head.run({ 'shared_feature': sharedFeature }),
+            onnxSessions.angle_head.run({ 'shared_feature': sharedFeature })
+        ]);
+
+        const classLogit = classOutput.class_logit_output.data[0];
+        const classProb = 1.0 / (1.0 + Math.exp(-classLogit));
+        const angleMean = Array.from(angleOutput.angle_mean_output.data);
+
+        return { classProb, angleMean };
+    }
+
+    // Drawing the skeleton on canvas
+    function drawUserSkeleton(keypoints) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.save();
+        
+        // Mirror the canvas to match the video feed
+        ctx.translate(canvas.width, 0);
+        ctx.scale(-1, 1);
+        
+        const scaleX = canvas.width / video.videoWidth;
+        const scaleY = canvas.height / video.videoHeight;
+        
+        // Draw joints
+        ctx.fillStyle = '#5898e8'; 
+        ctx.globalAlpha = 0.8;
+        for (const kp of keypoints) {
+            ctx.beginPath();
+            ctx.arc(kp.x * scaleX, kp.y * scaleY, 5, 0, 2 * Math.PI);
+            ctx.fill();
+        }
+        
+        // Draw connections (using normalized screen coordinates from keypoints)
+        ctx.strokeStyle = '#5898e8';
+        ctx.lineWidth = 3;
+        ctx.globalAlpha = 0.6;
+
+        for (const [startName, endName] of JOINT_CONNECTIONS) {
+            const startKp = keypoints.find(kp => kp.name === startName);
+            const endKp = keypoints.find(kp => kp.name === endName);
+
+            if (startKp && endKp) {
+                ctx.beginPath();
+                ctx.moveTo(startKp.x * scaleX, startKp.y * scaleY);
+                ctx.lineTo(endKp.x * scaleX, endKp.y * scaleY);
+                ctx.stroke();
+            }
+        }
+
+        ctx.restore();
+    }
+
+
+    async function processingLoop() {
+        if (!isProcessing || !detector) {
+            animationFrameId = requestAnimationFrame(processingLoop);
+            return;
+        }
+
+        try {
+            const video = document.getElementById('video');
+            const canvas = document.getElementById('output-canvas');
+            const ctx = canvas ? canvas.getContext('2d') : null;
+            
+            // 1. Estimate Pose
+            const poses = await detector.estimatePoses(video);
+            
+            let frame3D;
+
+            if (poses && poses.length > 0 && poses[0].keypoints3D) {
+                const pose = poses[0];
+                const keypoints3D = pose.keypoints3D; 
+                
+                // Draw 2D Skeleton
+                drawUserSkeleton(pose.keypoints);
+                
+                // Sanitize and Map 3D data (No null objects)
+                frame3D = keypoints3D.map(kp => {
+                    if (kp && typeof kp.x === 'number') { 
+                        return [kp.x, kp.y, kp.z];
+                    } else {
+                        return [0.0, 0.0, 0.0]; 
+                    }
+                });
+            } else {
+                // ถ้า Pose หายไป (ป้องกัน error)
+                frame3D = Array(33).fill([0.0, 0.0, 0.0]);
+                ctx.clearRect(0, 0, canvas.width, canvas.height); 
+            }
+            
+            // 2. Store Data (Sanitized frame3D)
+            poseWindow.push(frame3D); 
+
+            // 3. Maintain Fixed Window Size
+            if (poseWindow.length > WINDOW_SIZE) {
+                poseWindow.shift(); // Remove the oldest frame
+            }
+
+            // 4. Run Inference when window is full (T=16)
+            if (poseWindow.length === WINDOW_SIZE) {
+                document.getElementById('inference-status').innerText = "Status: Running Inference...";
+                
+                // 💡 SOLUTION: เพิ่ม Logic การ Run Inference
+                const inputTensor = prepareInputTensor(poseWindow);
+                const results = await runInference(inputTensor);
+                
+                document.getElementById('inference-status').innerText = "Status: Inference Complete.";
+
+                // 5. Update UI
+                document.getElementById('class-prob').innerText = `${results.classProb.toFixed(4)} (${results.classProb > 0.5 ? 'CORRECT' : 'WRONG'})`;
+                document.getElementById('angle-mean').innerText = results.angleMean.map(a => a.toFixed(2) + '°').join(' | ');
+            }
+            
+            frameCounter++;
+            document.getElementById('total-frames').innerText = `Frames Processed: ${frameCounter} (Window Fill: ${poseWindow.length}/${WINDOW_SIZE})`;
+
+        } catch (error) {
+            console.error("FATAL Processing error:", error);
+            // แสดง Error และหยุด Process
+            document.getElementById('error-message').innerText = `FATAL: Processing Error. (See console)`;
+            document.getElementById('error-message').classList.remove('hidden');
+            isProcessing = false;
+        }
+
+        animationFrameId = requestAnimationFrame(processingLoop);
+    }
+    
+    // --- User Controls ---
+    function toggleProcessing(start) {
+        if (start) {
+            if (!detector) {
+                document.getElementById('error-message').innerText = "Detector not initialized. Please wait for model loading.";
+                return;
+            }
+            isProcessing = true;
+            poseWindow.length = 0; // Clear window on start
+            frameCounter = 0;
+            document.getElementById('output-panel').classList.remove('hidden');
+            document.getElementById('start-btn').disabled = true;
+            document.getElementById('stop-btn').disabled = false;
+            processingLoop();
+        } else {
+            isProcessing = false;
+            if (animationFrameId) cancelAnimationFrame(animationFrameId);
+            document.getElementById('start-btn').disabled = false;
+            document.getElementById('stop-btn').disabled = true;
+            document.getElementById('inference-status').innerText = "Status: Stopped. Results last frame shown.";
+            
+            // Print final results to console (as requested by user)
+            const finalResults = {
+                exercise: EXERCISE_ID,
+                totalFrames: frameCounter,
+                lastPrediction: {
+                    classProb: document.getElementById('class-prob').innerText,
+                    angleMean: document.getElementById('angle-mean').innerText
+                }
+            };
+            console.log("--- FINAL PREDICTION RESULTS (Console) ---");
+            console.log(finalResults);
+        }
+    }
+
+
+    // --- Initialization ---
+    window.onload = async () => {
+        try {
+            await loadONNX();
+            await setupCameraAndPose();
+            document.getElementById('start-btn').disabled = false;
+        } catch (e) {
+            console.error("Initialization failed:", e);
+        }
+    };
+</script>
+
+</body>
+</html>

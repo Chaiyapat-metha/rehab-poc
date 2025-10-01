@@ -39,3 +39,33 @@ message Caption {
   double end_time = 3;
   string text = 4;
 }
+
+// Multi-Task Ground Truth Labels
+message TrainingLabels {
+    string exercise_id = 1;
+    int32 label_class = 2; // Classification Head Label
+    repeated float label_angles_vector = 3; // Angle Regression Head Labels
+    repeated float label_pos_vector = 4;  // Positional Head Labels
+    bool is_valid_for_training = 5; // Metadata 
+}
+
+// Real-Time Inference Output (Response to Client)**
+message InferenceResult {
+    string exercise_id = 1;
+
+    // Classification Output
+    bool is_wrong = 2;
+    float class_confidence = 3; // Confidence score/Probability
+
+    // Positional / Joint Error Output
+    repeated int32 wrong_joints_indices = 4; // Indices (e.g., [14] for elbow)
+    map<int32, float> joint_errors_mm = 5; // Per-joint error in mm
+
+    // Angle Regression Output
+    map<string, float> angle_values = 6; // Current angle values (e.g., "LEFT_KNEE": 82.0)
+    map<string, float> angle_errors = 7; // Angle error relative to ground truth/target (e.g., "LEFT_KNEE": 5.2)
+
+    // Feedback (for Text/TTS engine)
+    string tts_text = 8;
+    string display_text = 9;
+}

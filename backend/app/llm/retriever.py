@@ -1,54 +1,61 @@
 from langchain_core.retrievers import BaseRetriever
+from langchain_core.runnables import Runnable
 from langchain_core.callbacks import CallbackManagerForRetrieverRun
 from langchain_core.documents import Document
 from typing import List
 
+from psycopg2.extras import RealDictCursor
 from app.utils import db
+from app.utils.db import DatabaseManager
+from app.config import load_config
 
 class RehabDbRetriever(BaseRetriever):
     """A custom retriever that fetches a user's progress from our database."""
     user_id: str
 
+    def invoke(self, query: str) -> List[Document]:
+        """Custom invoke method to bypass complex runtime setup if needed."""
+        # Simple invocation without run_manager logic for the chain
+        return self._get_relevant_documents(query)
+
     def _get_relevant_documents(
-        self, query: str, *, run_manager: CallbackManagerForRetrieverRun
+        self, query: str, *, run_manager: CallbackManagerForRetrieverRun = None # 💡 run_manager เป็น optional
     ) -> List[Document]:
-        """
-        The core logic of the retriever.
-        It runs SQL queries based on the user's question.
-        """
-        # A simple keyword-based logic to decide which data to fetch.
-        # A more advanced system would use embeddings or another LLM to parse the query.
         
+        db_manager = DatabaseManager()
         context_str = ""
         
         # --- Logic to fetch exercise list ---
-        if "ท่า" in query or "exercise" in query:
-            exercises = db.get_existing_exercise_names()
+        if "ท่า" in query or "exercise" in query or "สรุป" in query: # 💡 ตรวจสอบ 'สรุป' เพื่อดึง context เพิ่มเติม
+            exercises = list(load_config()['exercises'].keys()) 
             if exercises:
                 context_str += f"Available exercises: {', '.join(exercises)}.\n"
 
         # --- Logic to fetch user progress ---
-        # For this PoC, we fetch the 5 most recent labeled frames.
+        # ... (SQL and database fetching logic remains the same) ...
         sql = """
-        SELECT s.exercise_name, f.labels, f.time
-        FROM frames f
-        JOIN sessions s ON f.session_id = s.session_id
-        WHERE s.user_id = %s AND f.labels IS NOT NULL
-        ORDER BY f.time DESC
+        SELECT exercise_id, is_success, metric_errors, rep_timestamp
+        FROM rep_history
+        WHERE user_id = %s
+        ORDER BY rep_timestamp DESC
         LIMIT 5;
         """
-        recent_progress = db.execute_query(sql, (self.user_id,))
+        
+        try:
+            with db_manager.conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                 cursor.execute(sql, (self.user_id,))
+                 recent_progress = cursor.fetchall()
+        except Exception as e:
+            print(f"Error fetching progress for RAG: {e}")
+            recent_progress = []
+
         if recent_progress:
-            progress_summary = "\nRecent User Performance:\n"
+            progress_summary = "\nRecent User Performance (last 5 reps):\n"
             for row in recent_progress:
-                exercise_name, labels, time = row
-                # Convert label dict to a readable string
-                label_str = f"- At {time.strftime('%Y-%m-%d %H:%M')}, during '{exercise_name}', the pose was classified as '{labels.get('class')}' with severity {labels.get('severity', {})}.\n"
-                progress_summary += label_str
+                progress_summary += f"- {row['rep_timestamp'].strftime('%Y-%m-%d %H:%M')}: {row['exercise_id']}, Success: {row['is_success']}. Errors: {row['metric_errors']}.\n"
             context_str += progress_summary
         
         if not context_str:
             return []
             
-        # We return the entire context as a single Document
         return [Document(page_content=context_str)]

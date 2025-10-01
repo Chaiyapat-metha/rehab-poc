@@ -1,83 +1,71 @@
-# configs/poseaug_config.yaml
+# File: .\backend\training\training_configs\model_config.yaml
 
-# Dataset and data processing settings
-dataset:
-  joints: 33 # We are back to using raw 33 joints for PoseAug
-  input_dim: 3 # 3D coordinates (x, y, z)
-  window_size: 32
-  stride: 8
-  
-# Augmentation settings
-augmentation:
-  poseaug:
-    enabled: true
-    # Bone Angle (BA) augmentation parameters
-    ba_std_dev: 0.2
-    # Bone Length (BL) augmentation parameters
-    bl_std_dev: 0.15
-    # Random Translation/Rotation (RT) augmentation parameters
-    rt_yaw_deg: 20
-    rt_pitch_deg: 10
-    rt_roll_deg: 5
-  occlusion:
-    p_mask: 0.1
-
-# Model architecture settings
 model:
-  encoder: tcn_gru
-  tcn:
-    blocks: [1, 2, 3]                  # List of TCN block counts to sweep
-    channels: [256, 256, 256]          # Keep constant for now
-    kernel: 3
-    dilation_levels: [1, 2, 4, 8]      # List of dilation levels to sweep
-  pooling:
-    type: ['none', 'average', 'max']   # List of pooling types to sweep
-    pool_size: 4
-  gru:
-    layers: [1, 2, 3]                  # List of GRU layers to sweep
-    hidden: [64, 128, 256]             # List of GRU hidden units to sweep
-    dropout: 0.2
-  
-# Heads for multi-task learning
-heads:
-  pos_regression:
-    enabled: true
-    hidden: 128
-    output_dim: 99 # 33 joints * 3 dimensions
-  angle_regression:
-    enabled: true
-    hidden: 128
-    output_dim: 6  # 6 angles as a regression target
-  classification:
-    enabled: true
-    hidden: 64    
-    output_dim: 1
+  backbone:
+    type: "TCN_GRU"
+    tcn:
+      blocks: 1
+      kernel_size: 3
+      dilation_levels: [2]
+    gru:
+      layers: 1
+      hidden: 256
+      bidirectional: false
+      dropout: 0.0
+  heads:
+    Jump_squats:
+      type: "multi-task"
+      # Input features: World Coordinates (x,y,z) for all 33 joints
+      outputs:
+        classification:
+          num_classes: 2             # correct / wrong
+          loss: "BCEWithLogitsLoss"
+          weight: 1.0
+        regression_angles:
+          metrics_source: "exercises.yaml" # Refer to angle_output_order in exercises.yaml
+          loss: "GaussianNLLLoss" # Use NLL since we predict logvar for uncertainty
+          weight: 0.8
+        regression_pos: 
+          output_dim: 99
+          loss: "L1Loss"
+          weight: 0.2
 
-# Loss function settings
-loss:
-  w_pos: 1.0 # Weight for L_pos
-  w_angle: 0.5 # Weight for L_angle
-  w_bce: 0.2 # Weight for L_bce
-# Database connection
-database:
-  host: "localhost"
-  port: 5433
-  dbname: "rehab_db"
-  user: "nonny"
-  password: "nonny"
-
-# Training loop settings
+    Stretching_upper_trapezius:
+      type: "multi-task"
+      outputs:
+        classification:
+          num_classes: 3             # good / left high / right high
+          loss: "CrossEntropyLoss"
+          weight: 1.0
+        regression_angles:
+          metrics_source: "exercises.yaml"
+          loss: "GaussianNLLLoss"
+          weight: 0.5
+          
 training:
-  epochs: 120
+  optimizer:
+    type: "Adam"
+    lr: 1e-3
+    weight_decay: 1e-5
+  loss:
+    total: "weighted_sum"
+    balance_strategy: "auto_scale"
   batch_size: 32
-  lr: 0.001
-  weight_decay: 0.0001
-  optimizer: AdamW
-  mixed_precision: true
-  early_stop_patience: 10
-  exercise_name: "Jump squats"
+  epochs: 20
+  seed: 42
   
-# Logging settings
-logging:
-  log_dir: "results"
-  log_file: "poseaug_sweep.csv"
+data:
+  dataset_path: "./data/"
+  split_ratio: [0.7, 0.15, 0.15]   # train/val/test
+  augmentation_config: "./augmentation.yaml"
+  exercises_config: "./exercises.yaml"
+
+inference:
+  export:
+    backbone: "./weights/backbone.onnx"
+    heads_dir: "./weights/"
+  device: "cuda"    # or "cpu"
+  threshold_controller:
+    mode: "external"    # manage personalization outside model
+    smoothing: true
+    min_success_before_update: 3

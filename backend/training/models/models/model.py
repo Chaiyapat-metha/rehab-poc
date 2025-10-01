@@ -1,158 +1,169 @@
-# rehab-poc/backend/training/experiment_TCN_GRU_PoseAug/models/tcn_gru.py
+# File: .\backend\training\models\models\model.py
 
 import torch
 import torch.nn as nn
-from typing import List
+import torch.nn.functional as F
+from typing import Dict, Any, List, Tuple, Optional
 
 class TCNBlock(nn.Module):
-    def __init__(self, in_channels: int, out_channels: int, kernel_size: int, dilation: int):
+    """
+    TCN Block with Residual Connection and Dilated Convolution.
+    The input/output is transposed to be (Batch, Channel, Time) for Conv1D.
+    """
+    def __init__(self, input_size, output_size, kernel_size, dilation, dropout=0.0):
         super().__init__()
-        self.conv1 = nn.Conv1d(
-            in_channels,
-            out_channels,
-            kernel_size,
-            padding="same",
-            dilation=dilation,
-        )
-        self.conv2 = nn.Conv1d(
-            out_channels,
-            out_channels,
-            kernel_size,
-            padding="same",
-            dilation=dilation,
-        )
+        
+        # Padding สำหรับ Dilated Causal Convolution: 
+        padding = dilation * (kernel_size - 1) // 2
+
+        self.conv1 = nn.Conv1d(input_size, output_size, kernel_size, dilation=dilation, padding=padding)
         self.relu = nn.ReLU()
-        self.bn1 = nn.BatchNorm1d(out_channels)
-        self.bn2 = nn.BatchNorm1d(out_channels)
-        self.dropout = nn.Dropout(0.2)
+        self.dropout = nn.Dropout(dropout)
         
-        # Residual connection
-        self.residual_conv = nn.Conv1d(in_channels, out_channels, 1) if in_channels != out_channels else nn.Identity()
-
-    def forward(self, x):
-        res = self.residual_conv(x)
+        # Residual Connection (Identity Mapping)
+        self.residual = nn.Identity()
+        if input_size != output_size:
+            self.residual = nn.Conv1d(input_size, output_size, 1)
         
+    def forward(self, x: torch.Tensor) -> torch.Tensor: # x shape: (B, C, T)
+        # 1. Save input for residual
+        residual = self.residual(x)
+        
+        # 2. Convolution path
         out = self.conv1(x)
-        out = self.bn1(out)
         out = self.relu(out)
         out = self.dropout(out)
+        
+        # 3. Add residual connection
+        return self.relu(out + residual)
 
-        out = self.conv2(out)
-        out = self.bn2(out)
-        out = self.relu(out)
-        out = self.dropout(out)
 
-        return out + res
-
-class TCNGRUModel(nn.Module):
-    def __init__(self, config: dict):
+class TCN_GRU_Backbone(nn.Module):
+    def __init__(self, model_cfg: Dict[str, Any]):
         super().__init__()
-        self.config = config
+        backbone_cfg = model_cfg['backbone']
+        tcn_cfg = backbone_cfg['tcn']
+        gru_cfg = backbone_cfg['gru']
         
-        # --- Input Embedding ---
-        input_dim = config['dataset']['joints'] * config['dataset']['input_dim']
-        self.input_mlp = nn.Sequential(
-            nn.Linear(input_dim, 256),
-            nn.ReLU(),
-            nn.Linear(256, 256)
-        )
+        input_dim = 33 * 3 # V*C
+        embed_dim = gru_cfg['hidden'] // 2 if gru_cfg['bidirectional'] else gru_cfg['hidden']
         
-        # --- TCN Part ---
-        tcn_channels = config['model']['tcn']['channels']
-        kernel_size = config['model']['tcn']['kernel']
-        tcn_blocks = config['model']['tcn']['blocks']
+        # 1. Pre-processing: Flatten (B,T,V,C) -> (B,T,V*C) -> Linear (V*C -> embed_dim)
+        self.embedding = nn.Linear(input_dim, embed_dim)
         
-        tcn_layers = []
-        in_channels = 256
-        for i in range(tcn_blocks):
-            dilation = config['model']['tcn']['dilation_levels'][i % len(config['model']['tcn']['dilation_levels'])]
-            out_channels = tcn_channels[min(i, len(tcn_channels) - 1)]
-            tcn_layers.append(TCNBlock(in_channels, out_channels, kernel_size, dilation))
-            in_channels = out_channels
-        self.tcn = nn.Sequential(*tcn_layers)
+        # 2. TCN Block (1 block, dilation 2)
+        # Note: TCN input is (B, C, T), output is (B, C, T). Need permute/transpose.
+        self.tcn = TCNBlock(embed_dim, embed_dim, tcn_cfg['kernel_size'], tcn_cfg['dilation_levels'][0]) 
         
-        # --- Pooling Part ---
-        self.pooling = self._build_pooling(config['model']['pooling']['type'], config['model']['pooling']['pool_size'])
-        
-        # --- GRU Part ---
-        gru_layers = config['model']['gru']['layers']
-        gru_hidden = config['model']['gru']['hidden']
-        gru_dropout = config['model']['gru']['dropout']
-        
+        # 3. GRU Layer (1 layer)
         self.gru = nn.GRU(
-            input_size=tcn_channels[-1] if tcn_blocks > 0 else 256,
-            hidden_size=gru_hidden,
-            num_layers=gru_layers,
+            embed_dim, 
+            gru_cfg['hidden'], 
+            num_layers=gru_cfg['layers'], 
             batch_first=True,
-            dropout=gru_dropout if gru_layers > 1 else 0
-        )
-        
-        # --- Output Heads for Multi-task Regression ---
-        pos_output_dim = config['heads']['pos_regression']['output_dim']
-        angle_output_dim = config['heads']['angle_regression']['output_dim']
-        class_output_dim = config['heads']['classification']['output_dim']
-        
-        gru_hidden = config['model']['gru']['hidden']
-        class_hidden = config['heads']['classification']['hidden']
-        
-        self.pos_head = nn.Sequential(
-            nn.Linear(gru_hidden, 128),
-            nn.ReLU(),
-            nn.Linear(128, pos_output_dim) # Output 99 dimensions
+            bidirectional=gru_cfg['bidirectional']
         )
 
-        self.angle_head = nn.Sequential(
-            nn.Linear(gru_hidden, 128),
-            nn.ReLU(),
-            nn.Linear(128, angle_output_dim) # Output 6 dimensions
-        )
+    def forward(self, x: torch.Tensor) -> torch.Tensor: # x shape: (B, T, V, C)
+        B, T, V, C = x.shape
+        x = x.view(B, T, -1) # Flatten to (B, T, V*C)
 
-        self.class_head = nn.Sequential(
-            nn.Linear(gru_hidden, class_hidden),
+        x = self.embedding(x) # (B, T, embed_dim)
+        
+        # TCN requires (B, C, T)
+        x_tcn = x.permute(0, 2, 1) # (B, embed_dim, T)
+        x_tcn = self.tcn(x_tcn) 
+        x_gru_in = x_tcn.permute(0, 2, 1) # (B, T, embed_dim)
+
+        output, _ = self.gru(x_gru_in) # output: (B, T, H)
+        final_feature = output[:, -1, :] # Final feature: (B, H)
+        return final_feature
+
+
+class Head(nn.Module):
+    def __init__(self, feature_dim: int, output_dim: int, loss_type: str, use_logvar: bool = False):
+        super().__init__()
+        self.loss_type = loss_type
+        self.use_logvar = use_logvar
+        
+        output_factor = 2 if use_logvar else 1
+        
+        self.mlp = nn.Sequential(
+            nn.Linear(feature_dim, 64),
             nn.ReLU(),
-            nn.Linear(class_hidden, class_output_dim) 
+            nn.Linear(64, output_dim * output_factor)
         )
-                
-    def _build_pooling(self, pool_type: str, pool_size: int):
-        if pool_type == 'max':
-            return nn.MaxPool1d(kernel_size=pool_size)
-        elif pool_type == 'average':
-            return nn.AvgPool1d(kernel_size=pool_size)
+        
+    def forward(self, feature: torch.Tensor) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        output = self.mlp(feature)
+        
+        if self.use_logvar:
+            # Predict mean and log variance
+            mean, logvar = torch.chunk(output, 2, dim=-1)
+            return mean, logvar
         else:
-            return nn.Identity()
+            return output, None
 
-    def forward(self, x):
-        # x shape: (batch, window_size, joints, dim)
-        batch_size, window_size, num_joints, input_dim = x.shape
+class MultiTaskModel(nn.Module):
+    def __init__(self, model_cfg: Dict[str, Any], exercises_cfg: Dict[str, Any]):
+        super().__init__()
+        self.backbone = TCN_GRU_Backbone(model_cfg['model']) 
+        self.heads = nn.ModuleDict()
+        self.exercise_heads_map = {}
         
-        # 1. Flatten: (batch, window_size, 99)
-        x = x.view(batch_size, window_size, -1) 
+        feature_dim = model_cfg['model']['backbone']['gru']['hidden']
         
-        # 2. Input MLP: Embed 99 dims to 256 dims (The code from the previous fix)
-        x = self.input_mlp(x) 
-        # Output shape is now (batch, window_size, 256)
+        for exercise_id, head_cfg in model_cfg['model']['heads'].items():
+            outputs = head_cfg['outputs']
+            
+            # --- 1. Classification Head ---
+            if 'classification' in outputs:
+                num_classes = outputs['classification']['num_classes']
+                head_name = f'{exercise_id}_class'
+                self.heads[head_name] = Head(feature_dim, 1 if num_classes == 2 else num_classes, outputs['classification']['loss'])
+                self.exercise_heads_map[f'{exercise_id}_class'] = head_name
+                
+            # --- 2. Angle Regression Head ---
+            if 'regression_angles' in outputs:
+                # Output dim = N_angles from exercises.yaml
+                n_angles = len(exercises_cfg.get(exercise_id, {}).get('angle_output_order', []))
+                head_name = f'{exercise_id}_angle'
+                # Angle head uses GaussianNLLLoss, so it must predict logvar (uncertainty)
+                self.heads[head_name] = Head(feature_dim, n_angles, outputs['regression_angles']['loss'], use_logvar=True)
+                self.exercise_heads_map[f'{exercise_id}_angle'] = head_name
+
+            # --- 3. Positional Regression Head ---
+            if 'regression_pos' in outputs:
+                output_dim = outputs['regression_pos']['output_dim'] # Should be 99
+                head_name = f'{exercise_id}_pos'
+                self.heads[head_name] = Head(feature_dim, output_dim, outputs['regression_pos']['loss'])
+                self.exercise_heads_map[f'{exercise_id}_pos'] = head_name
+
+    def forward(self, x: torch.Tensor, exercise_id: str) -> Dict[str, torch.Tensor]:
+        """
+        Runs the input through the backbone and the relevant head for the given exercise.
+        """
+        shared_feature = self.backbone(x)
         
-        # 3. Permute for TCN: (batch, channels, sequence_length)
-        x = x.permute(0, 2, 1) # Output shape: (batch, 256, window_size)
+        output = {}
         
-        # --- TCN Convolution (Correctly operates over the 32 timesteps) ---
-        x = self.tcn(x)
-        
-        # --- Pass through Pooling ---
-        x = self.pooling(x)
-        
-        # 4. Permute back for GRU: (batch, sequence_length, channels)
-        x = x.permute(0, 2, 1) 
-        
-        gru_output, _ = self.gru(x)
-        
-        last_timestep_output = gru_output[:, -1, :]
-        pos_output = self.pos_head(last_timestep_output)
-        angle_output = self.angle_head(last_timestep_output)
-        class_output = self.class_head(last_timestep_output) 
-        
-        return {
-            'pos_output': pos_output, 
-            'angle_output': angle_output,
-            'class_output': class_output # <--- คืนค่า Classification Output
-        }
+        # Run Classification Head
+        if f'{exercise_id}_class' in self.exercise_heads_map:
+            head_name = self.exercise_heads_map[f'{exercise_id}_class']
+            logits, _ = self.heads[head_name](shared_feature)
+            output['class_logits'] = logits.squeeze(1) # (B,)
+            
+        # Run Angle Regression Head
+        if f'{exercise_id}_angle' in self.exercise_heads_map:
+            head_name = self.exercise_heads_map[f'{exercise_id}_angle']
+            mean, logvar = self.heads[head_name](shared_feature)
+            output['angle_mean'] = mean
+            output['angle_logvar'] = logvar
+            
+        # Run Positional Regression Head
+        if f'{exercise_id}_pos' in self.exercise_heads_map:
+            head_name = self.exercise_heads_map[f'{exercise_id}_pos']
+            pos_pred, _ = self.heads[head_name](shared_feature)
+            output['pos_pred'] = pos_pred
+            
+        return output

@@ -1,0 +1,48 @@
+# File: .\backend\training\training_configs\exercises.yaml
+
+# -----------------------------------------------------------
+# Mapping of exercises to required joints and metrics
+# This drives label calculation (video_processor.py) 
+# and dataset loading (dataset.py)
+# -----------------------------------------------------------
+Jump_squats:
+  # Metrics list defines what must be computed as ground truth labels
+  metrics:
+    - name: LEFT_KNEE_ANGLE
+      joints: [LEFT_HIP, LEFT_KNEE, LEFT_ANKLE]
+      unit: degrees
+      metrics: ["MAE", "MSE"]
+    - name: RIGHT_KNEE_ANGLE
+      joints: [RIGHT_HIP, RIGHT_KNEE, RIGHT_ANKLE]
+      unit: degrees
+      metrics: ["MAE", "MSE"]
+    - name: HIP_BEND_ANGLE 
+      joints: [LEFT_SHOULDER, LEFT_HIP, LEFT_KNEE] 
+      unit: degrees
+      metrics: ["MAE", "MSE"]
+  # Order of angle outputs for the Angle Regression Head (BxN_angles)
+  angle_output_order: [LEFT_KNEE_ANGLE, RIGHT_KNEE_ANGLE, HIP_BEND_ANGLE]
+  # Classification mapping (0/1 for binary, >2 for multi-class)
+  classification_labels:
+    0: correct
+    1: wrong_shallow_depth # We use this for augmentation target
+  
+Stretching_upper_trapezius:
+  metrics:
+    - name: LEFT_ELBOW_ANGLE
+      joints: [LEFT_SHOULDER, LEFT_ELBOW, LEFT_WRIST]
+      unit: degrees
+      metrics: ["MAE", "MSE"]
+    - name: RIGHT_ELBOW_ANGLE
+      joints: [RIGHT_SHOULDER, RIGHT_ELBOW, RIGHT_WRIST]
+      unit: degrees
+      metrics: ["MAE", "MSE"]
+    - name: SHOULDER_LEVEL_DIFF
+      joints: [LEFT_SHOULDER, RIGHT_SHOULDER] # Compute vertical difference (Y-coord diff)
+      unit: mm
+      metrics: ["shoulder_level_diff"]
+  angle_output_order: [LEFT_ELBOW_ANGLE, RIGHT_ELBOW_ANGLE, SHOULDER_LEVEL_DIFF]
+  classification_labels:
+    0: good
+    1: left_high
+    2: right_high

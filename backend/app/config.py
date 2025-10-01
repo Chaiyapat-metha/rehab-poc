@@ -1,39 +1,42 @@
+# File: .\backend\app\config.py
+
 import yaml
-import importlib
 from pathlib import Path
+from functools import lru_cache
 
-CONFIG_PATH = Path(__file__).parent.parent / "models.yaml"
+# (config.py -> app -> backend -> project_root)
+PROJECT_ROOT = Path(__file__).resolve().parents[2] 
 
-def load_config(path: Path = CONFIG_PATH) -> dict:
-    """โหลดไฟล์ YAML config"""
-    with open(path, 'r', encoding='utf-8') as f:
-        return yaml.safe_load(f)
+CONFIG_DIR = PROJECT_ROOT / "backend" / "training_configs"
+MODEL_CONFIG_PATH = CONFIG_DIR / "model_config.yaml"
+EXERCISES_CONFIG_PATH = CONFIG_DIR / "exercises.yaml"
+AUGMENTATION_CONFIG_PATH = CONFIG_DIR / "augmentation.yaml"
 
-def load_class_from_path(path: str):
-    """Dynamic import class จาก string path e.g., 'app.models.MyModel'"""
-    try:
-        module_name, cls_name = path.rsplit('.', 1)
-        module = importlib.import_module(module_name)
-        return getattr(module, cls_name)
-    except (ImportError, AttributeError) as e:
-        raise ImportError(f"Could not import class from path: {path}") from e
+@lru_cache(maxsize=1)
+def load_config() -> dict:
+    """
+    Loads and caches all necessary YAML configurations, including LLM settings.
+    """
+    config = {}
 
-def get_model_instance(model_name: str):
-    """สร้าง instance ของโมเดลจาก config"""
-    config = load_config()
-    model_config = config.get(model_name)
-    if not model_config:
-        raise ValueError(f"Model '{model_name}' not found in config.")
+    # --- 1. โหลด Training Configs ---
+    with open(MODEL_CONFIG_PATH, 'r') as f:
+        config['model_config'] = yaml.safe_load(f)
 
-    cls = load_class_from_path(model_config['class_path'])
-    instance = cls(**model_config.get('params', {}))
-    
-    # โหลด model weights ถ้ามี path ระบุไว้
-    model_path = model_config.get('model_path')
-    if model_path:
-        instance.load(model_path)
+    with open(EXERCISES_CONFIG_PATH, 'r') as f:
+        config['exercises'] = yaml.safe_load(f)
         
-    return instance
+    with open(AUGMENTATION_CONFIG_PATH, 'r') as f:
+        config['augmentation'] = yaml.safe_load(f)
+        
+    # --- 2. โหลด models.yaml (LLM และ ONNX Paths) ---
+    MODELS_YAML_PATH = PROJECT_ROOT / "backend" / "models.yaml"
+    with open(MODELS_YAML_PATH, 'r') as f:
+        models_config = yaml.safe_load(f)
 
-# โหลด config ทั้งหมดเมื่อ module ถูก import
-app_config = load_config()
+    config['llm'] = models_config.get('llm', {}) 
+    
+    config['model_paths'] = models_config # เก็บ paths อื่นๆ ที่เหลือ
+
+    return config
+

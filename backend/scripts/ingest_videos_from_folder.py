@@ -1,59 +1,57 @@
-# scripts/ingest_videos_from_folder.py
+# File: .\backend\scripts\ingest_videos_from_folder.py
 
+import os
+import sys
 from pathlib import Path
 
-# Import our custom modules
-from scripts.video_processor import process_video_for_training
-from app.utils import db
+sys.path.append(str(Path(__file__).resolve().parents[1])) 
 
-# --- CONFIGURATION ---
-# The path to the folder containing your training video files.
-VIDEO_SOURCE_DIR = Path("C:/Users/chaiyapat metha/Desktop/AI Project/rehab-poc/Video/train/ขา/Jump squats")
+from scripts.video_processor import VideoProcessor
 
-def main():
+TRAIN_ROOT = Path(r"C:\Users\chaiyapat metha\Desktop\AI Project\rehab-poc\Video\train")
+
+def scan_and_ingest(root_path: Path):
     """
-    Finds all .mp4 and .mov files in the source directory, assigns a label,
-    and processes them for training data ingestion.
+    Scans the training video directory structure and processes each video.
+    Structure: {Category}/{Exercise_Name}/{correct/wrong}/{video_files}
     """
-    if not VIDEO_SOURCE_DIR.is_dir():
-        print(f"❌ Error: Source directory not found: {VIDEO_SOURCE_DIR}")
-        return
-
-    print(f"Starting batch ingestion from: {VIDEO_SOURCE_DIR}")
-    print("-" * 40)
-
-    # --- Step 1: Find all video files and their labels ---
-    video_files_list = []
-    # Loop through 'correct' and 'wrong' subfolders
-    for sub_folder in ['correct', 'wrong']:
-        folder_path = VIDEO_SOURCE_DIR / sub_folder
-        if not folder_path.is_dir():
-            print(f"Warning: Subfolder '{sub_folder}' not found. Skipping.")
+    processor = VideoProcessor(model_complexity=2) 
+    
+    # 1. วนลูปผ่าน Category (ขา, แขน, คอ, ลำตัว, ทั้งตัว)
+    for category_folder in root_path.iterdir():
+        if not category_folder.is_dir():
             continue
             
-        files_in_sub = list(folder_path.glob("*.mp4")) + list(folder_path.glob("*.mov"))
-        for file in files_in_sub:
-            video_files_list.append({
-                'path': str(file),
-                'label': sub_folder
-            })
-    
-    if not video_files_list:
-        print("No video files (.mp4, .mov) found in the training subfolders.")
-        return
-        
-    print(f"Found {len(video_files_list)} video file(s) for ingestion.")
+        print(f"--- Scanning Category: {category_folder.name} ---")
 
-    # --- Step 2: Process all found videos ---
-    for video_info in video_files_list:
-        process_video_for_training(video_info['path'], video_info['label'])
-        print("-" * 40)
+        # 2. วนลูปผ่าน Exercise (เช่น Jump squats)
+        for exercise_folder in category_folder.iterdir():
+            if not exercise_folder.is_dir():
+                continue
 
-    print("\n" + "=" * 40)
-    print("✅ Batch ingestion complete!")
-    print(f"   - Total videos processed: {len(video_files_list)}")
-    print("=" * 40)
+            exercise_name = exercise_folder.name.replace(' ', '_') # ใช้ชื่อท่าเป็น exercise_id 
+            print(f"  Found Exercise: {exercise_name}")
+         
+            # 3a. โฟลเดอร์ 'correct'
+            correct_path = exercise_folder / 'correct'
+            if correct_path.is_dir():
+                print(f"    Processing {len(list(correct_path.glob('*.mp4')))} correct videos...")
+                for video_file in correct_path.glob('*.mp4'):
+                    print(f"      Ingesting correct: {video_file.name}")
+                    # ส่งไฟล์ไปประมวลผล (Label class=0 สำหรับ Correct)
+                    processor.process_video(video_file, exercise_name, label_class=0)
 
+            # 3b. โฟลเดอร์ 'wrong'
+            wrong_path = exercise_folder / 'wrong'
+            if wrong_path.is_dir():
+                print(f"    Processing {len(list(wrong_path.glob('*.mp4')))} wrong videos...")
+                for video_file in wrong_path.glob('*.mp4'):
+                    print(f"      Ingesting wrong: {video_file.name}")
+                    # ส่งไฟล์ไปประมวลผล (Label class=1 สำหรับ Wrong)
+                    processor.process_video(video_file, exercise_name, label_class=1)
+                    
+    processor.flush_batches() 
+    print("\nIngestion process complete. Database batches flushed.")
 
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__':
+    scan_and_ingest(TRAIN_ROOT)

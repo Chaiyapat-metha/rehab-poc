@@ -1,159 +1,164 @@
-# rehab-poc/backend/training/experiment_TCN_GRU_PoseAug/models/pose_augmenter.py
+# File: .\backend\training\models\models\augmentation.py
 
-import torch
-import torch.nn as nn
 import numpy as np
-import math
-from typing import List, Dict, Tuple
-from scipy.spatial.transform import Rotation as R
+import torch
+import random
+from typing import Dict, Any, Tuple, Optional, List
+from backend.app.config import load_config
 
-# --- 33-Joint MediaPipe Kinematic Tree (Parents Definition) ---
-# Parent index of each joint. -1 indicates the root joint (Right Hip = 24).
-# This is crucial for hierarchical reconstruction.
-# Index: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32
-MP_PARENTS = [
-    1, 2, 3, 7, 4, 5, 6, 0, 0, 10, 9, 23, 24, 11, 12, 13, 14, 15, 16, 15, 16, 15, 16, 24, -1, 24, 23, 26, 25, 28, 27, 30, 29
-]
+# Constants for coordinate indices (based on MediaPipe world coordinates)
+X_IDX, Y_IDX, Z_IDX = 0, 1, 2
+V_JOINTS = 33 # Total number of joints
 
-# --- Symmetric Bone Pairs (Child Indices) ---
-# Pairs of bones (L/R) that must receive the same BL factor
-MP_BONE_PAIRS_SYM = [
-    (11, 12), (13, 14), (15, 16), (17, 18), (19, 20), (21, 22), 
-    (23, 24), (25, 26), (27, 28), (29, 30), (31, 32)
-]
-
-class PoseAugmenter(nn.Module):
-    def __init__(self, parents: List[int], bone_pairs_sym: List[Tuple[int, int]], config: Dict[str, any] = None):
-        super().__init__()
+class Augmentor:
+    """
+    Handles both global geometric augmentations and per-exercise logic 
+    to create synthetic 'wrong' examples and update labels accordingly.
+    """
+    def __init__(self, seed: int = 42):
+        self.config = load_config()
+        self.global_cfg = self.config['augmentation'].get('global', {})
+        self.per_exercise_cfg = self.config['augmentation'].get('per_exercise', {})
+        random.seed(seed)
+        np.random.seed(seed)
         
-        # --- Kinematic Tree Setup ---
-        self.parents = parents
-        self.J = len(self.parents)
-        self.child_inds = [j for j in range(self.J) if self.parents[j] != -1]
-        self.parent_inds = [self.parents[j] for j in self.child_inds]
-        self.K = len(self.child_inds) # Number of bones
-        self.bone_pairs_sym = bone_pairs_sym or []
+        self.JOINT_MAPPER = self._get_joint_mapper_static()
 
-        # --- Config Setup (Using recommended initial values) ---
-        default = {
-            'bl_std': 0.12,
-            'bl_clip': 0.4,
-            'rt_rot_deg': 30.0,
-            'rt_trans': 0.12,
+    @staticmethod
+    def _get_joint_mapper_static() -> Dict[str, int]:
+        """
+        Provides a static mapping from exercise names (Upper Case) to MediaPipe indices.
+        """
+        return {
+            'NOSE': 0, 'LEFT_EYE_INNER': 1, 'LEFT_EYE': 2, 'LEFT_EYE_OUTER': 3,
+            'RIGHT_EYE_INNER': 4, 'RIGHT_EYE': 5, 'RIGHT_EYE_OUTER': 6,
+            'LEFT_EAR': 7, 'RIGHT_EAR': 8, 'MOUTH_LEFT': 9, 'MOUTH_RIGHT': 10,
+            
+            # Core Joints (ใช้ในการคำนวณ Angle)
+            'LEFT_SHOULDER': 11, 'RIGHT_SHOULDER': 12,
+            'LEFT_ELBOW': 13, 'RIGHT_ELBOW': 14,
+            'LEFT_WRIST': 15, 'RIGHT_WRIST': 16,
+            'LEFT_HIP': 23, 'RIGHT_HIP': 24,
+            'LEFT_KNEE': 25, 'RIGHT_KNEE': 26,
+            'LEFT_ANKLE': 27, 'RIGHT_ANKLE': 28,
+            'LEFT_HEEL': 29, 'RIGHT_HEEL': 30,
+            'LEFT_FOOT_INDEX': 31, 'RIGHT_FOOT_INDEX': 32,
         }
-        self.cfg = default if config is None else {**default, **config}
 
-    def forward(self, X: torch.Tensor):
-        # X: (B,T,J,3)  -> B=Batch Size (1 in Dataloader), T=Window Size (32), J=33, C=3
-        assert X.ndim == 4 and X.shape[-1] == 3
-        B, T, J, C = X.shape
-        device, dtype = X.device, X.dtype
+    # ----------------------------------------------------------------------
+    # 1. Global Geometric Augmentations (Rotation, Jitter, Occlusion)
+    # ----------------------------------------------------------------------
 
-        # --- BL (Bone Length) Augmentation ---
-        child = torch.tensor(self.child_inds, device=device)
-        parent = torch.tensor(self.parent_inds, device=device)
+    def apply_global_augmentation(self, keypoints: np.ndarray) -> np.ndarray:
+        """
+        Applies geometric augmentations (rotation, jitter, occlusion) 
+        to the keypoints (T, V, C).
+        """
+        keypoints_aug = keypoints.copy()
+        
+        # 1. Rotation (Rotate around Y-axis / vertical axis)
+        if random.random() < self.global_cfg.get('prob_rotate', 0.0):
+            deg = random.uniform(*self.global_cfg.get('rotation_deg', [-15, 15]))
+            rad = np.deg2rad(deg)
+            # 2D Rotation matrix in XZ plane (around Y-axis)
+            R = np.array([
+                [np.cos(rad), 0, np.sin(rad)],
+                [0, 1, 0],
+                [-np.sin(rad), 0, np.cos(rad)]
+            ])
+            keypoints_aug = np.dot(keypoints_aug, R.T)
+            
+        # 2. Jitter (Add Gaussian noise)
+        if random.random() < self.global_cfg.get('prob_jitter', 0.0):
+            sigma = self.global_cfg.get('jitter_sigma_norm', 0.005)
+            noise = np.random.normal(0, sigma, size=keypoints_aug.shape)
+            keypoints_aug += noise
+            
+        # 3. Occlusion (Setting visibility/coords to zero - needs visibility info)
+        # Note: เราไม่มี visibility channel ใน input (V, 3) แต่เราสามารถเซ็ตพิกัดเป็น 0 ได้
+        if random.random() < self.global_cfg.get('prob_occlude', 0.0):
+            num_occlude = self.global_cfg.get('occlude_joints_count', 5)
+            # สุ่ม Joints ที่จะ Occlude
+            occlude_indices = random.sample(range(V_JOINTS), num_occlude)
+            keypoints_aug[:, occlude_indices, :] = 0.0 # Set coordinates to zero
 
-        X_child = X[..., child, :]
-        X_parent = X[..., parent, :]
-        Bvec = X_child - X_parent                               # Bone Vectors (B,T,K,3)
+        # NOTE: เมื่อมีการหมุน (Rotation) ต้องมั่นใจว่า Ground Truth Labels (Angles) 
+        # จะต้องถูกคำนวณใหม่หากจำเป็น
+        return keypoints_aug
 
-        eps = 1e-8
-        lengths = torch.norm(Bvec, dim=-1, keepdim=True)        # Bone Lengths (B,T,K,1)
-        B_hat = Bvec / (lengths + eps)                          # Unit Bone Vectors (B,T,K,3)
+    # ----------------------------------------------------------------------
+    # 2. Per-Exercise Augmentation (Synthetic Wrong Examples)
+    # ----------------------------------------------------------------------
 
-        # 1. Generate scaling factors (constant across time for simplicity: B, 1, K, 1)
-        bl_std = float(self.cfg['bl_std'])
-        bl_factors = torch.randn(B, 1, self.K, 1, device=device, dtype=dtype) * bl_std + 1.0
-        clip = float(self.cfg.get('bl_clip', 0.4))
-        if clip and clip > 0:
-            bl_factors = torch.clamp(bl_factors, 1.0 - clip, 1.0 + clip)
+    def apply_per_exercise_augmentation(self, 
+                                        keypoints: np.ndarray, 
+                                        exercise_id: str, 
+                                        original_labels: Dict[str, Any]
+                                        ) -> Tuple[np.ndarray, Dict[str, Any]]:
+        """
+        Applies specific rules to create synthetic 'wrong' examples 
+        and updates classification/regression labels.
+        """
+        keypoints_aug = keypoints.copy()
+        updated_labels = original_labels.copy()
+        
+        if exercise_id not in self.per_exercise_cfg:
+            return keypoints_aug, updated_labels
 
-        # 2. Enforce Symmetry (Average factor for L/R bones)
-        for (ka, kb) in self.bone_pairs_sym:
-            # FIX: Only proceed if BOTH joints are actual children (i.e., not the root)
-            if ka in self.child_inds and kb in self.child_inds: 
-                a_idx = self.child_inds.index(ka)
-                b_idx = self.child_inds.index(kb)
-
-                a = bl_factors[..., a_idx:a_idx+1, :]
-                b = bl_factors[..., b_idx:b_idx+1, :]
-                mean = 0.5 * (a + b)
+        cfg = self.per_exercise_cfg[exercise_id]
+        
+        # --- Jump Squat Rules ---
+        if exercise_id == 'Jump_squats':
+            # Simulate insufficient depth (shallower squat)
+            if random.random() < cfg.get('prob_add_knee_bias', 0.0):
+                deg_bias = random.uniform(*cfg.get('knee_bias_deg_range', [0, 0])) # Negative is shallower
                 
-                bl_factors[..., a_idx:a_idx+1, :] = mean
-                bl_factors[..., b_idx:b_idx+1, :] = mean 
+                # Logic: เพิ่มค่า Y (ยกขึ้น) ให้กับสะโพกและเข่า เพื่อทำให้การงอน้อยลง
+                y_offset = np.abs(deg_bias) * 0.01 
+                
+                hip_indices = [self.JOINT_MAPPER['LEFT_HIP'], self.JOINT_MAPPER['RIGHT_HIP']]
+                knee_indices = [self.JOINT_MAPPER['LEFT_KNEE'], self.JOINT_MAPPER['RIGHT_KNEE']]
 
-        # 3. Apply scaling to reconstruct the bone vectors
-        lengths_prime = lengths * bl_factors
-        Bvec_prime = B_hat * lengths_prime                      # New Bone Vectors
+                # Apply offset to Hips and Knees (y-coord)
+                keypoints_aug[:, hip_indices, Y_IDX] += y_offset
+                keypoints_aug[:, knee_indices, Y_IDX] += y_offset
+                
+                # Set classification label to 'wrong_shallow_depth' (1)
+                updated_labels['label_class'] = cfg.get('target_class_bias', 1) 
+                updated_labels['is_synthetic_wrong'] = True
 
-        # 4. Hierarchical Reconstruction (H-inverse)
-        root_idx = self.parents.index(-1)
-        Xp = torch.zeros_like(X, device=device, dtype=dtype)
-        Xp[..., root_idx, :] = X[..., root_idx, :] # Root remains fixed
-        
-        # We assume parents are ordered before children (top-down traversal)
-        processed = {root_idx}
-        child2bone = {c: idx for idx, c in enumerate(self.child_inds)}
-        
-        # Traverse the tree to reconstruct skeleton
-        for c in self.child_inds: # Iterating through children
-            p = self.parents[c]
-            if p in processed:
-                k = child2bone[c]
-                Xp[..., c, :] = Xp[..., p, :] + Bvec_prime[..., k, :]
-                processed.add(c)
-        X = Xp # X now holds the BL-augmented pose
+        # --- Stretching Upper Trapezius Rules ---
+        elif exercise_id == 'Stretching_upper_trapezius':
+             # Offset shoulder height (left_high or right_high)
+            if random.random() < cfg.get('prob_shoulder_level_offset', 0.0):
+                mm_offset = random.uniform(*cfg.get('shoulder_level_offset_mm_range', [0, 0])) / 1000.0 # mm to meters
+                target_classes = cfg.get('target_class_offset', [1, 2])
 
-        # X คือ BL-augmented pose data (B, T, J, 3)
-        # ----------------------------------------------------
-        # --- RT (Rigid Transform) Augmentation ---
-        # ----------------------------------------------------
-        rot_deg = float(self.cfg.get('rt_rot_deg', 30.0))
-        trans_mag = float(self.cfg.get('rt_trans', 0.12))
-        
-        # 1. Center the Pose around the Root Joint (24)
-        root_idx = self.parents.index(-1)
-        root_pos = X[..., root_idx:root_idx+1, :]  # (B,T,1,3)
-        Xc = X - root_pos                          # Centered Pose (B, T, J, 3)
-        
-        # 2. Generate Rotation Matrix (R_mat) - [B, 3, 3]
-        rot_angles = (torch.rand(B, 1, 3, device=device, dtype=dtype) * 2.0 - 1.0) * (rot_deg * math.pi / 180.0)
-        
-        # ใช้ scipy.spatial.transform.Rotation (R) ในการสร้าง R_mat [B, 3, 3]
-        rot_angles_np = rot_angles.squeeze(1).cpu().numpy()
-        R_mat_np = R.from_euler('xyz', rot_angles_np, degrees=False).as_matrix()
-        R_mat = torch.tensor(R_mat_np, device=device, dtype=dtype) # R_mat shape: (B, 3, 3)
+                # Randomly select left or right high (class 1 or 2)
+                class_label = random.choice(target_classes)
+                
+                if class_label == 1: # Left High
+                    keypoints_aug[:, self.JOINT_MAPPER['LEFT_SHOULDER'], Y_IDX] += mm_offset
+                elif class_label == 2: # Right High
+                    keypoints_aug[:, self.JOINT_MAPPER['RIGHT_SHOULDER'], Y_IDX] += mm_offset
 
-        # 3. Apply Rotation using Batched Matrix Multiplication (BMM)
-        
-        # a. เตรียม Centered Pose: รวม Batch และ Time เข้าด้วยกัน
-        # Xc_bmm shape: (B * T, J, 3)
-        Xc_bmm = Xc.view(B * T, J, 3)
-        
-        # b. เตรียม Rotation Matrix: ต้องทำซ้ำ (repeat) R_mat T ครั้ง
-        # R_mat_bmm shape: (B * T, 3, 3)
-        R_mat_bmm = R_mat.unsqueeze(1).repeat(1, T, 1, 1).view(B * T, 3, 3)
-        
-        # c. ทำ BMM: [ (B*T), J, 3 ] @ [ (B*T), 3, 3 ] -> [ (B*T), J, 3 ]
-        rotated_bmm = torch.bmm(Xc_bmm, R_mat_bmm) 
-        
-        # d. ปรับรูปร่างกลับเป็น (B, T, J, 3)
-        rotated = rotated_bmm.view(B, T, J, 3)
-        
-        # 4. Apply Translation
-        trans_mag = float(self.cfg.get('rt_trans', 0.12))
-        trans_vecs = (torch.rand(B, 1, 3, device=device, dtype=dtype) * 2.0 - 1.0) * trans_mag
-        
-        Xp_rot = rotated + root_pos                 # Re-add root position
-        Xp_trans = Xp_rot + trans_vecs.unsqueeze(2) # Add translation (broadcasts across T and J)
-        
-        return Xp_trans.contiguous()
+                updated_labels['label_class'] = class_label
+                updated_labels['is_synthetic_wrong'] = True
 
-# The Augmenter requires initialization with the actual structure
-def initialize_pose_augmenter(config: Dict[str, any]):
-    """Helper function to create the PoseAugmenter instance."""
-    # NOTE: You MUST ensure scipy and torch work together for 3D rotation.
-    # The parent indices for 33 joints must be fully listed for the model to work correctly.
-    
-    # We use the simplified structure defined globally
-    return PoseAugmenter(MP_PARENTS, MP_BONE_PAIRS_SYM, config['augmentation']['poseaug'])
+        # ... (เพิ่ม Rules สำหรับท่าอื่นๆ) ...
+        
+        return keypoints_aug, updated_labels
+
+
+# ----------------------------------------------------------------------
+# 3. Data Flow Integration (Update video_processor.py)
+# ----------------------------------------------------------------------
+
+# NOTE: Augmentation.py ควรถูกใช้ใน:
+# 1. Training loop (on-the-fly augmentation) 
+# 2. Ingestion script (เพื่อสร้าง wrong examples ถาวรใน DB)
+
+# **ถ้าใช้สำหรับ Ingestion (เพื่อสร้าง wrong samples ถาวรใน DB):**
+# ต้องสร้างสคริปต์ใหม่ชื่อ augment_ingest.py ที่วนลูปดึง Correct data จาก DB, 
+# เรียก Augmentor.apply_per_exercise_augmentation, 
+# คำนวณ Labels ใหม่, และบันทึกกลับเข้า DB ด้วย ingest_skeleton_data_batch/ingest_label_data_batch

@@ -1,97 +1,99 @@
--- เปิดใช้งาน TimescaleDB extension
+--
+-- File: infra/timescaledb-init.sql
+-- Purpose: Initialize TimescaleDB schema for training and user data
+--
+
+-- 1. EXTENSIONS
+-- ต้องเปิดใช้งาน TimescaleDB extension ก่อน
 CREATE EXTENSION IF NOT EXISTS timescaledb;
 
--- ตารางเก็บข้อมูลท่าออกกำลังกาย 
-CREATE TABLE IF NOT EXISTS exercises (
-    exercise_id SERIAL PRIMARY KEY,
-    name VARCHAR(255) UNIQUE NOT NULL,
-    category VARCHAR(100) NOT NULL, 
-    description TEXT,
-    duration VARCHAR(50),
-    level VARCHAR(50),
-    thumbnail_url VARCHAR(255),
-    preview_video_url VARCHAR(255),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+
+-- ========================================================================
+-- TRAINING DATABASE TABLES (Time-Series Data)
+-- ========================================================================
+
+-- ตารางหลักสำหรับเก็บข้อมูล Skeleton/Joints (B, T, V, C) 
+CREATE TABLE skeleton_data (
+    ingest_uuid UUID NOT NULL, 
+    ingest_timestamp TIMESTAMP WITHOUT TIME ZONE NOT NULL, 
+    frame_idx INTEGER NOT NULL,
+    exercise_id TEXT NOT NULL,
+    joints_data BYTEA NOT NULL,
+    video_id_original TEXT, 
+    
+    -- PK ควรเป็น UUID + Frame Index 
+    PRIMARY KEY (ingest_uuid, frame_idx) 
 );
 
--- ตารางเก็บข้อมูลผู้ใช้
-CREATE TABLE IF NOT EXISTS users (
-    user_id VARCHAR(255) PRIMARY KEY,
-    rehab_stage INT,
-    consent_flags JSONB,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+-- แปลงตาราง skeleton_data ให้เป็น Hypertable โดยใช้ ingest_timestamp
+SELECT create_hypertable('skeleton_data', 'ingest_timestamp');
+
+
+-- ตารางสำหรับเก็บ Ground Truth Labels (สำหรับ Multi-task Training)
+CREATE TABLE exercise_labels (
+    ingest_uuid UUID NOT NULL,
+    ingest_timestamp TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+    frame_idx INTEGER NOT NULL,
+    exercise_id TEXT NOT NULL,
+    
+    -- Classification Head Label: 0=Correct, 1=Incorrect, 2=Other...
+    label_class INTEGER,
+    
+    -- Regression Head Label: Vector ของมุม/ความคลาดเคลื่อนที่กำหนดใน exercises.yaml (เช่น 6-dim angle vector)
+    label_angles_vector REAL[], 
+    
+    -- Positional Head Label: 99-dim vector (V*C)
+    label_pos_vector REAL[],
+    
+    PRIMARY KEY (ingest_uuid, frame_idx)
 );
 
--- ตารางเก็บข้อมูล Session
-CREATE TABLE IF NOT EXISTS sessions (
-    session_id VARCHAR(255) PRIMARY KEY,
-    user_id VARCHAR(255) REFERENCES users(user_id),
-    exercise_name VARCHAR(255) REFERENCES exercises(name),
-    device_info TEXT,
-    start_ts TIMESTAMPTZ,
-    end_ts TIMESTAMPTZ,
-    calibration_data BYTEA,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+-- แปลงตาราง exercise_labels ให้เป็น Hypertable โดยใช้ ingest_timestamp
+SELECT create_hypertable('exercise_labels', 'ingest_timestamp');
+
+
+-- ========================================================================
+-- USER/HISTORY DATABASE TABLES (Key-Value/Relational Data)
+-- ========================================================================
+
+-- ตารางสำหรับเก็บประวัติการทำซ้ำ (Reps) ของผู้ใช้ สำหรับ ThresholdController
+CREATE TABLE rep_history (
+    rep_id SERIAL PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    exercise_id TEXT NOT NULL,
+    session_id TEXT,
+    rep_timestamp TIMESTAMP WITHOUT TIME ZONE NOT NULL,
+    is_success BOOLEAN NOT NULL, -- ผลลัพธ์ Rep นี้ (ใช้ Threshold ปัจจุบัน)
+    metric_errors JSONB -- เก็บรายละเอียดความผิดพลาดของมุม/ตำแหน่ง (เช่น {"LEFT_KNEE_ANGLE": 5.2})
 );
 
--- ตารางหลักสำหรับเก็บข้อมูล Frame (Hypertable)
-CREATE TABLE IF NOT EXISTS frames (
-    "time" TIMESTAMPTZ NOT NULL,
-    session_id VARCHAR(255) REFERENCES sessions(session_id),
-    frame_no BIGINT,
-    raw_frame_data BYTEA, -- Protobuf binary blob
-    feature_vector REAL[], -- Engineered features for faster query
-    labels JSONB,
-    PRIMARY KEY (session_id, "time")
+-- ตารางสำหรับเก็บ Threshold ปัจจุบันของผู้ใช้แต่ละคน
+CREATE TABLE user_thresholds (
+    user_id TEXT NOT NULL,
+    exercise_id TEXT NOT NULL,
+    metric_name TEXT NOT NULL, -- เช่น LEFT_KNEE_ANGLE_ERROR
+    current_threshold REAL NOT NULL, -- ค่า Threshold ปัจจุบัน (เช่น 15.0 องศา)
+    PRIMARY KEY (user_id, exercise_id, metric_name)
 );
 
--- สร้าง Hypertable บนตาราง frames
--- Partitioning by session_id is a good practice for multi-tenant data
-SELECT create_hypertable('frames', 'time', if_not_exists => TRUE, chunk_time_interval => INTERVAL '1 day');
-CREATE INDEX IF NOT EXISTS idx_session_id_time ON frames (session_id, "time" DESC);
-
--- New table to store raw skeleton data for training
-CREATE TABLE IF NOT EXISTS training_skeletons (
-    time TIMESTAMPTZ NOT NULL,
-    video_id VARCHAR(255) NOT NULL,
-    frame_no BIGINT,
-    label VARCHAR(50) NOT NULL,
-    keypoints REAL[], -- Raw 3D coordinates (33 joints * 3 coords = 99 values)
-    visibility REAL[], -- Visibility scores for each joint
-    PRIMARY KEY (video_id, time)
-);
-
--- Create a Hypertable on the new table
-SELECT create_hypertable('training_skeletons', 'time', if_not_exists => TRUE, chunk_time_interval => INTERVAL '1 day');
-
--- ตารางเก็บผลลัพธ์จาก ASR
-CREATE TABLE IF NOT EXISTS captions (
-    caption_id SERIAL PRIMARY KEY,
-    session_id VARCHAR(255) REFERENCES sessions(session_id),
-    start_ts TIMESTAMPTZ, -- Timestamp แบบเต็ม
-    end_ts TIMESTAMPTZ,   -- Timestamp แบบเต็ม
-    text TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
--- ตารางเก็บข้อมูลความคืบหน้า
-CREATE TABLE IF NOT EXISTS progress (
-    progress_id SERIAL PRIMARY KEY,
-    user_id VARCHAR(255) REFERENCES users(user_id),
-    week_start_date DATE,
-    metrics JSONB, -- e.g., {"elbow_left_max_rom": 120.5, "avg_score": 0.85}
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
--- ตารางสำหรับเก็บ "ข้อเสนอ" การปรับแก้เป้าหมาย
-CREATE TABLE IF NOT EXISTS threshold_proposals (
-    proposal_id SERIAL PRIMARY KEY,
-    user_id VARCHAR(255) REFERENCES users(user_id),
-    exercise_name VARCHAR(255) REFERENCES exercises(name),
-    metric_key TEXT NOT NULL, -- e.g., 'left_elbow_angle_max'
-    current_value REAL,
+-- ตารางสำหรับบันทึกการเสนอ/เปลี่ยนแปลง Threshold (ThresholdController)
+CREATE TABLE threshold_history (
+    history_id SERIAL PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    exercise_id TEXT NOT NULL,
+    metric_name TEXT NOT NULL,
+    date_proposed TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
     proposed_value REAL NOT NULL,
-    status VARCHAR(50) DEFAULT 'pending', -- pending, accepted, rejected
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    responded_at TIMESTAMPTZ
+    previous_value REAL NOT NULL,
+    user_accepted BOOLEAN -- NULL คือรอกาตัดสินใจ, TRUE/FALSE คือผลการตัดสินใจ
+);
+
+-- ตารางสำหรับบันทึกการเสนอ Thresholds (Proposal History)
+CREATE TABLE proposal_history (
+    proposal_id SERIAL PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    exercise_id TEXT NOT NULL,
+    proposal_timestamp TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
+    -- เก็บค่า Thresholds ที่ถูกเสนอทั้งหมดเป็น JSONB
+    proposed_thresholds JSONB NOT NULL 
 );
